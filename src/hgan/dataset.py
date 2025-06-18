@@ -358,12 +358,12 @@ class HGNRealtimeDataset(Dataset):
         # We're not using self.total_frames here at all, since we only want self.num_frames from
         # the rollout, and the rollouts are randomly initialized anyway.
 
-        vid = None
         colors = None
+        rollout = None
         # Rollouts are not guaranteed to give us self.num_frames in certain
         # cases where solve_ivp fails - keep trying till they do.
-        while vid is None or vid.shape[0] != self.num_frames:
-            vids, colors = system.sample_random_rollouts(
+        while rollout is None or rollout.shape[0] != self.num_frames:
+            rollouts = system.sample_random_rollouts(
                 number_of_frames=self.num_frames,
                 delta_time=self.delta,
                 number_of_rollouts=1,
@@ -374,13 +374,7 @@ class HGNRealtimeDataset(Dataset):
                 seed=None,
                 constant_color=self.system_color_constant,
             )
-            vid = vids[0]
-
-        # transpose each video to (nc, n_frames, img_size, img_size)
-        vid = vid.transpose(3, 0, 1, 2)
-
-        if self.normalize:
-            vid = (vid - 0.5) / 0.5
+            rollout = rollouts[0].transpose()
 
         labels_and_props = torch.cat(
             (
@@ -389,12 +383,11 @@ class HGNRealtimeDataset(Dataset):
             )
         )
 
-        vid = vid.astype(np.float32)
-
         color_vec = torch.zeros(self.ndim_color)
         colors = torch.tensor(np.array(colors).flatten().astype(np.float32))[
             : self.ndim_color
         ]
         color_vec[: len(colors)] = colors
+        rollout = rollout.astype(np.float32)
 
-        return vid, labels_and_props, color_vec
+        return rollout, labels_and_props, color_vec

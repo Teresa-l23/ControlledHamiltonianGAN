@@ -16,7 +16,7 @@ from hgan.models import GRU, HNNSimple, HNNPhaseSpace, HNNMass
 from hgan.dataset import RealtimeDataset, HGNRealtimeDataset, ToyPhysicsDatasetNPZ
 from hgan.utils import setup_reproducibility, timeSince
 from hgan.fvd import compute_fvd
-from hgan.models import Discriminator_I, Discriminator_V, Generator_I
+from hgan.models import Discriminator_I, Discriminator_V, Generator_I, TrajectoryGenerator
 from hgan.updates import update_models
 
 
@@ -145,13 +145,19 @@ class Experiment:
             T=config.video.discriminator_frames,
             n_label_and_props=n_label_and_props,
         ).to(self.device)
-        self.Gi = Generator_I(
-            self.ndim_channel,
-            self.ndim_generator_filter,
+        # self.Gi = Generator_I(
+        #     self.ndim_channel,
+        #     self.ndim_generator_filter,
+        #     self.nz + self.ndim_label + self.ndim_color,
+        #     ngpu=self.ngpu,
+        # ).to(self.device)
+        self.Gi = TrajectoryGenerator(
             self.nz + self.ndim_label + self.ndim_color,
+            self.ndim_hiddenlayer,
+            config.video.generator_frames,
+            self.traj_dim,
             ngpu=self.ngpu,
         ).to(self.device)
-
         rnn_class = {
             "gru": GRU,
             "hnn_simple": HNNSimple,
@@ -395,7 +401,7 @@ class Experiment:
         )
         # trim => (batch_size, T, nz, 1, 1)
         Z = self.trim_video(video=Z, n_frame=n_frames)
-        Z_reshape = Z.contiguous().view(self.batch_size * n_frames, self.nz, 1, 1)
+        Z_reshape = Z.contiguous().view(self.batch_size * n_frames, self.nz)
 
         # Append label+color information; duplicating it for each frame
         # (batch_size, n) => (batch_size * n_frames, n, 1, 1)
@@ -406,21 +412,13 @@ class Experiment:
             label_and_colors.unsqueeze(1)
             .repeat(1, n_frames, 1)
             .contiguous()
-            .view(self.batch_size * n_frames, -1, 1, 1)
+            .view(self.batch_size * n_frames, -1)
         )
         Z_reshape = torch.cat((Z_reshape, label_and_colors_reshape), dim=1)
 
         fake_videos = self.Gi(Z_reshape)
 
-        fake_videos = fake_videos.view(
-            self.batch_size, n_frames, self.ndim_channel, self.img_size, self.img_size
-        )
-        # transpose => (batch_size, nc, T, img_size, img_size)
-        fake_videos = fake_videos.transpose(2, 1)
-        # img sampling
-        fake_img = fake_videos[:, :, np.random.randint(0, n_frames), :, :]
-
-        fake_data = {"videos": fake_videos, "img": fake_img, "latent": Z, "dlatent": dz}
+        fake_data = {"videos": fake_videos, "latent": Z, "dlatent": dz}
 
         return fake_data
 
@@ -458,13 +456,13 @@ class Experiment:
         colors = colors.to(device)
         colors = Variable(colors)
 
-        real_videos_frames = real_videos.shape[2]
+        # real_videos_frames = real_videos.shape[2]
 
-        real_img = real_videos[:, :, np.random.randint(0, real_videos_frames), :, :]
+        # real_img = real_videos[:, :, np.random.randint(0, real_videos_frames), :, :]
 
         real_data = {
             "videos": real_videos,
-            "img": real_img,
+            # "img": real_img,
             "label_and_props": label_and_props,
             "colors": colors,
         }

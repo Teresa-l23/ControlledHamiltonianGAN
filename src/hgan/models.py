@@ -335,7 +335,29 @@ class Generator_I(nn.Module):
             output = self.main(input)
         return output
 
+class TrajectoryGenerator(nn.Module):
+    def __init__(self, nz=60, hidden_dim=128, traj_len=30, traj_dim=2, ngpu=1):
+        super(TrajectoryGenerator, self).__init__()
+        self.ngpu = ngpu
+        self.traj_len = traj_len
+        self.traj_dim = traj_dim
+        self.main = nn.Sequential(
+            nn.Linear(nz, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, traj_len * traj_dim),
+            nn.Tanh(),
+        )
 
+    def forward(self, input):
+        if isinstance(input.data, torch.cuda.FloatTensor) and self.ngpu > 1:
+            output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
+        else:
+            output = self.main(input)
+        output = output.reshape([-1,self.traj_len,self.traj_dim])
+        return output
+    
 class GRU(nn.Module):
     """
     Notes
