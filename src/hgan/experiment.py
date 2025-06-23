@@ -18,6 +18,7 @@ from hgan.utils import setup_reproducibility, timeSince
 from hgan.fvd import compute_fvd
 from hgan.models import Discriminator_I, Discriminator_V, Generator_I, TrajectoryGenerator
 from hgan.updates import update_models
+from hgan.sgan_discriminator import TrajectoryDiscriminator
 
 
 logger = logging.getLogger(__name__)
@@ -139,12 +140,17 @@ class Experiment:
             ngpu=self.ngpu,
             n_label_and_props=n_label_and_props,
         ).to(self.device)
-        self.Dv = Discriminator_V(
-            self.ndim_channel,
-            self.ndim_discriminator_filter,
-            T=config.video.discriminator_frames,
-            n_label_and_props=n_label_and_props,
-        ).to(self.device)
+        # self.Dv = Discriminator_V(
+        #     self.ndim_channel,
+        #     self.ndim_discriminator_filter,
+        #     T=config.video.discriminator_frames,
+        #     n_label_and_props=n_label_and_props,
+        # ).to(self.device)
+        self.Dv = TrajectoryDiscriminator(
+            config.video.generator_frames,
+            config.experiment.ndim_label + config.experiment.ndim_physics,
+            d_type = 'global'
+        ).to(self.device)        
         # self.Gi = Generator_I(
         #     self.ndim_channel,
         #     self.ndim_generator_filter,
@@ -152,10 +158,10 @@ class Experiment:
         #     ngpu=self.ngpu,
         # ).to(self.device)
         self.Gi = TrajectoryGenerator(
-            self.nz + self.ndim_label + self.ndim_color,
+            self.nz + self.ndim_label,
             self.ndim_hiddenlayer,
             config.video.generator_frames,
-            self.traj_dim,
+            self.max_n,
             ngpu=self.ngpu,
         ).to(self.device)
         rnn_class = {
@@ -391,7 +397,7 @@ class Experiment:
         end = start + n_frame
         return video[:, start:end, ...]
 
-    def get_fake_data(self, n_frames=None, label_and_props=None, colors=None):
+    def get_fake_data(self, n_frames=None, label_and_props=None, colors=None, mask=None):
         n_frames = n_frames or self.config.video.generator_frames
         # Z.size() => (batch_size, n_frames, nz, 1, 1)
         Z, dz, _ = self.get_latent_sample(
@@ -407,16 +413,16 @@ class Experiment:
         # (batch_size, n) => (batch_size * n_frames, n, 1, 1)
 
         label = label_and_props[:, : self.ndim_label]
-        label_and_colors = torch.cat((label, colors), dim=1)
-        label_and_colors_reshape = (
-            label_and_colors.unsqueeze(1)
+        # label_and_colors = torch.cat((label, colors), dim=1)
+        label_reshape = (
+            label.unsqueeze(1)
             .repeat(1, n_frames, 1)
             .contiguous()
             .view(self.batch_size * n_frames, -1)
         )
-        Z_reshape = torch.cat((Z_reshape, label_and_colors_reshape), dim=1)
+        Z_reshape = torch.cat((Z_reshape, label_reshape), dim=1)
 
-        fake_videos = self.Gi(Z_reshape)
+        fake_videos = self.Gi(Z_reshape,mask)
 
         fake_data = {"videos": fake_videos, "latent": Z, "dlatent": dz}
 
@@ -440,12 +446,16 @@ class Experiment:
         next_item = next(iter(dataloader))
         if isinstance(next_item, (tuple, list)):
             real_videos = next_item[0]
-            if len(next_item) > 2:
-                colors = next_item[2]
-            if len(next_item) > 1:
-                label_and_props = next_item[1]
+            velocities = next_item[1]
+            mask = next_item[2][0]
+            if len(next_item) > 4:
+                colors = next_item[4]
+            if len(next_item) > 3:
+                label_and_props = next_item[3]
         else:
             real_videos = next_item
+            velocities = next_item[1]
+            mask = next_item[2][0]
 
         real_videos = real_videos.to(
             device
@@ -455,14 +465,18 @@ class Experiment:
         label_and_props = Variable(label_and_props)
         colors = colors.to(device)
         colors = Variable(colors)
-
+        mask = mask.to(device)
+        mask = Variable(mask)
+        velocities = velocities.to(device)
+        velocities = Variable(velocities)
         # real_videos_frames = real_videos.shape[2]
 
         # real_img = real_videos[:, :, np.random.randint(0, real_videos_frames), :, :]
 
         real_data = {
             "videos": real_videos,
-            # "img": real_img,
+            "velocities": velocities,
+            "mask": mask,
             "label_and_props": label_and_props,
             "colors": colors,
         }
@@ -488,10 +502,12 @@ class Experiment:
                 "label_and_props"
             ]  # (batch_size, 1, ndim_label+ndim_physics)
             colors = real_data["colors"]  # (batch_size, 1, ndim_color)
+            mask = real_data["mask"]
+            velocities = real_data["velocities"]
 
         if fake_videos is None:
             fake_data = self.get_fake_data(
-                label_and_props=label_and_props, colors=colors
+                label_and_props=label_and_props, colors=colors, mask=mask
             )
             fake_videos = fake_data[
                 "videos"
@@ -546,9 +562,10 @@ class Experiment:
         real_data = self.get_real_data()
         label_and_props = real_data["label_and_props"]
         colors = real_data["colors"]
+        mask = real_data["mask"]
 
-        fake_data = self.get_fake_data(label_and_props=label_and_props, colors=colors)
-
+        fake_data = self.get_fake_data(label_and_props=label_and_props, colors=colors, mask=mask)
+        self.Dv.train()
         err, mean = update_models(
             rnn_type=self.architecture,
             label=self.label,
@@ -597,43 +614,39 @@ class Experiment:
 
             last_epoch = epoch == self.n_epoch
 
-            if epoch % self.calculate_fvd_every == 0 or last_epoch:
-                fvd = self.fvd(real_videos=real_videos, fake_videos=fake_videos)
-                logger.info(f"FVD = {fvd}")
+            # if epoch % self.calculate_fvd_every == 0 or last_epoch:
+            #     fvd = self.fvd(real_videos=real_videos, fake_videos=fake_videos)
+            #     logger.info(f"FVD = {fvd}")
 
             if epoch % self.print_every == 0 or last_epoch:
                 logger.info(
-                    "[%d/%d] (%s) Loss_Di: %.4f Loss_Dv: %.4f Loss_Gi: %.4f Loss_Gv: %.4f Di_real_mean %.4f Di_fake_mean %.4f Dv_real_mean %.4f Dv_fake_mean %.4f"
+                    "[%d/%d] (%s) Loss_Dv: %.4f Loss_Gv: %.4f Dv_real_mean %.4f Dv_fake_mean %.4f"
                     % (
                         epoch,
                         self.n_epoch,
                         timeSince(start_time),
-                        err["Di"],
                         err["Dv"],
-                        err["Gi"],
                         err["Gv"],
-                        mean["Di_real"],
-                        mean["Di_fake"],
                         mean["Dv_real"],
                         mean["Dv_fake"],
                     )
                 )
 
-            if epoch % self.save_fake_video_every == 0 or last_epoch:
-                self.save_video(
-                    self.config.paths.output,
-                    fake_videos[0].detach().cpu().numpy().transpose(1, 2, 3, 0),
-                    epoch=epoch,
-                    prefix="fake_",
-                )
+            # if epoch % self.save_fake_video_every == 0 or last_epoch:
+            #     self.save_video(
+            #         self.config.paths.output,
+            #         fake_videos[0].detach().cpu().numpy().transpose(1, 2, 3, 0),
+            #         epoch=epoch,
+            #         prefix="fake_",
+            #     )
 
-            if epoch % self.save_real_video_every == 0 or last_epoch:
-                self.save_video(
-                    self.config.paths.output,
-                    real_videos[0].detach().cpu().numpy().transpose(1, 2, 3, 0),
-                    epoch=epoch,
-                    prefix="real_",
-                )
+            # if epoch % self.save_real_video_every == 0 or last_epoch:
+            #     self.save_video(
+            #         self.config.paths.output,
+            #         real_videos[0].detach().cpu().numpy().transpose(1, 2, 3, 0),
+            #         epoch=epoch,
+            #         prefix="real_",
+            #     )
 
             if epoch % self.save_model_every == 0 or last_epoch:
                 self.save_epoch(epoch)

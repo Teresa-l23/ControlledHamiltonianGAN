@@ -14,11 +14,11 @@ def bp_i(*, label, criterion, dis_i, inputs, label_props_colors, y, retain=False
     return err.item(), outputs  # .data.mean()
 
 
-def bp_v(*, label, criterion, dis_v, inputs, label_props_colors, y, retain=False):
+def bp_v(*, label, criterion, dis_v, inputs, label_props_colors, video_mask, y, retain=False):
     label.resize_(inputs.size(0)).fill_(y)
     labelv = Variable(label)
 
-    outputs = dis_v(inputs, label_props_colors)
+    outputs = dis_v(inputs, label_props_colors,video_mask)
 
     err = criterion(outputs, labelv)
     err.backward(retain_graph=retain)
@@ -28,7 +28,7 @@ def bp_v(*, label, criterion, dis_v, inputs, label_props_colors, y, retain=False
 
 def r1_loss(r1_gamma, real_out, real_input):
     grad_real = grad(outputs=real_out.sum(), inputs=real_input, create_graph=True)[0]
-    grad_penalty = (grad_real.view(grad_real.size(0), -1).norm(2, dim=1) ** 2).mean()
+    grad_penalty = (grad_real.reshape(grad_real.size(0), -1).norm(2, dim=1) ** 2).mean()
     grad_penalty = r1_gamma / 2 * grad_penalty
     grad_penalty.backward()
 
@@ -49,11 +49,9 @@ def update_Dv(
 ):
 
     real_videos = real_data["videos"]
-    label_props_colors = torch.concat(
-        (real_data["label_and_props"], real_data["colors"]), dim=1
-    )
+    video_mask = real_data["mask"]
+    label_props = real_data["label_and_props"]
     fake_videos = fake_data["videos"]
-
     dis_v.zero_grad()
 
     # needed for r1 loss
@@ -64,28 +62,29 @@ def update_Dv(
         criterion=criterion,
         dis_v=dis_v,
         inputs=real_videos,
-        label_props_colors=label_props_colors,
+        label_props_colors=label_props,
+        video_mask = video_mask,
         y=gamma,
         retain=True,
     )
     Dv_real_mean = real_out.data.mean()
 
     # https://github.com/rosinality/style-based-gan-pytorch/blob/a3d000e707b70d1a5fc277912dc9d7432d6e6069/train.py
-    r1_loss_value = 0
-    if r1_gamma != 0:
-        r1_loss_value = r1_loss(r1_gamma, real_out, real_videos)
-
+    # r1_loss_value = 0
+    # if r1_gamma != 0:
+    #     r1_loss_value = r1_loss(r1_gamma, real_out, real_videos)
     err_Dv_fake, fake_out = bp_v(
         label=label,
         criterion=criterion,
         dis_v=dis_v,
         inputs=fake_videos.detach(),
-        label_props_colors=label_props_colors,
+        label_props_colors=label_props,
+        video_mask = video_mask,
         y=0,
     )
     Dv_fake_mean = fake_out.data.mean()
 
-    err_Dv = err_Dv_real + err_Dv_fake + r1_loss_value
+    err_Dv = err_Dv_real + err_Dv_fake #+ r1_loss_value
 
     optim_Dv.step()
 
@@ -171,6 +170,7 @@ def update_G(
     optim_Gi,
     optim_RNN,
     label_props_colors,
+    video_mask,
     gamma=0.9
 ):
     model_gi.zero_grad()
@@ -184,30 +184,31 @@ def update_G(
         dis_v=model_dv,
         inputs=fake_data["videos"],
         label_props_colors=label_props_colors,
+        video_mask=video_mask,
         y=gamma,
         retain=True,
     )
     # images
     # retain=True for back prop three times
-    if rnn_type == "hnn_phase_space":
-        err_Gi, _ = bp_i(
-            label=label,
-            criterion=criterion,
-            dis_i=model_di,
-            inputs=fake_data["img"],
-            label_props_colors=label_props_colors,
-            y=gamma,
-            retain=True,
-        )
-    else:  # gru
-        err_Gi, _ = bp_i(
-            label=label,
-            criterion=criterion,
-            dis_i=model_di,
-            inputs=fake_data["img"],
-            y=gamma,
-            retain=False,
-        )
+    # if rnn_type == "hnn_phase_space":
+    #     err_Gi, _ = bp_i(
+    #         label=label,
+    #         criterion=criterion,
+    #         dis_i=model_di,
+    #         inputs=fake_data["img"],
+    #         label_props_colors=label_props_colors,
+    #         y=gamma,
+    #         retain=True,
+    #     )
+    # else:  # gru
+    #     err_Gi, _ = bp_i(
+    #         label=label,
+    #         criterion=criterion,
+    #         dis_i=model_di,
+    #         inputs=fake_data["img"],
+    #         y=gamma,
+    #         retain=False,
+    #     )
 
     # latent
     if rnn_type == "hnn_phase_space":
@@ -221,7 +222,7 @@ def update_G(
     optim_Gi.step()
     optim_RNN.step()
 
-    return {"Gv": err_Gv, "Gi": err_Gi}
+    return {"Gv": err_Gv}
 
 
 def update_models(
@@ -257,21 +258,21 @@ def update_models(
         optim_Dv=optim_dv,
         gamma=discriminator_gamma,
     )
-    err_Di, mean_Di = update_Di(
-        rnn_type=rnn_type,
-        label=label,
-        criterion=criterion,
-        r1_gamma=r1_gamma,
-        dis_i=model_di,
-        real_data=real_data,
-        fake_data=fake_data,
-        optim_Di=optim_di,
-        gamma=discriminator_gamma,
-    )
+    # err_Di, mean_Di = update_Di(
+    #     rnn_type=rnn_type,
+    #     label=label,
+    #     criterion=criterion,
+    #     r1_gamma=r1_gamma,
+    #     dis_i=model_di,
+    #     real_data=real_data,
+    #     fake_data=fake_data,
+    #     optim_Di=optim_di,
+    #     gamma=discriminator_gamma,
+    # )
+    err_Di, mean_Di = 0, 0 
 
-    label_props_colors = torch.concat(
-        (real_data["label_and_props"], real_data["colors"]), dim=1
-    )
+    label_props = real_data["label_and_props"]
+    video_mask = real_data["mask"]
     err_G = update_G(
         rnn_type=rnn_type,
         label=label,
@@ -286,11 +287,12 @@ def update_models(
         fake_data=fake_data,
         optim_Gi=optim_gi,
         optim_RNN=optim_rnn,
-        label_props_colors=label_props_colors,
+        label_props_colors=label_props,
+        video_mask=video_mask,
         gamma=generator_gamma,
     )
 
-    err = {**err_Dv, **err_Di, **err_G}
-    mean = {**mean_Dv, **mean_Di}
+    err = {**err_Dv, **err_G}
+    mean = {**mean_Dv}
 
     return err, mean
