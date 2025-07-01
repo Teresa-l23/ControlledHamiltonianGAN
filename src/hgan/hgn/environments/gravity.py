@@ -192,6 +192,17 @@ class NObjectGravity(Environment):
             vid = np.expand_dims(np.max(vid, axis=-1), -1)
         return vid, ball_colors
 
+    def extract_q(self, traj, mask, frame_idx):
+        valid_idx = np.where(mask > 0)[0]
+        traj_t = traj[frame_idx][:, valid_idx]
+        return traj_t.transpose()
+    
+    def _convert_to_t2n_format(self):
+        q = self._rollout.reshape(2, self.n_objects, 2, -1)[0]
+        traj = q.transpose(2, 1, 0)
+
+        return traj
+    
     def _sample_init_conditions(self, radius_bound):
         """Samples random initial conditions for the environment
         Args:

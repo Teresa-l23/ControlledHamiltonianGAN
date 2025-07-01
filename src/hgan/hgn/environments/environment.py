@@ -20,6 +20,7 @@ class Environment(ABC):
             (0.0, 146.0 / 255, 0.0),
         ]
         self._rollout = None
+        self.n_max = 10
         self.q = None
         self.p = None
         self.set(q=q, p=p)
@@ -62,7 +63,14 @@ class Environment(ABC):
             NotImplementedError: Class instantiation has no implementation
         """
         raise NotImplementedError
+    @abstractmethod
+    def extract_q(self, traj: np.ndarray, mask: np.ndarray, frame_idx: int = 0):
+        raise NotImplementedError
 
+    @abstractmethod
+    def _convert_to_t2n_format(self,  n_max: int = 10):
+        raise NotImplementedError
+    
     @abstractmethod
     def get_world_size(self):
         """Returns the world size for the environment."""
@@ -177,16 +185,34 @@ class Environment(ABC):
         for i in range(number_of_rollouts):
             self._sample_init_conditions(radius_bound)
             self._evolution(total_time, delta_time)
+            #没有考虑frame  
             if noise_level > 0.0:
                 self._rollout += (
                     np.random.randn(*self._rollout.shape)
                     * noise_level
                     * self.get_max_noise_std()
                 )
-            rollout.append(self._rollout)
- 
-        return rollout
+            traj = self._convert_to_t2n_format()
+
+        return traj
         # return np.array(batch_sample), np.array(ball_color)
+    def calculate_fixed_rollout(
+        self,
+        q,
+        p,
+        number_of_frames=100,
+        delta_time=0.1,
+    ):
+        total_time = number_of_frames * delta_time
+        self.set(q,p)
+        self._evolution(total_time, delta_time)
+        # print(self._rollout[:,0])
+        traj = self._convert_to_t2n_format() 
+        # print(traj[0])
+        return traj
+        # return np.array(batch_sample), np.array(ball_color)
+
+
 
     def physical_properties(self, vec_length, dtype=np.float32):
         if vec_length <= 0:

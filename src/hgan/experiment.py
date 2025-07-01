@@ -120,7 +120,7 @@ class Experiment:
 
         if len(dataset) == 0:
             raise RuntimeError("No videos found!")
-
+        self.dataset=dataset
         self.dataloader = DataLoader(
             dataset,
             batch_size=config.experiment.batch_size,
@@ -247,6 +247,12 @@ class Experiment:
         filename = filename or f"{prefix}{epoch:0>6}"
         file_path = os.path.join(folder, f"{filename}.mp4")
         skvideo.io.vwrite(file_path, outputdata, verbosity=0)
+
+    def save_trajectory(self, folder, trajectory, epoch=None, filename=None, prefix="trajectory_"):
+        os.makedirs(folder, exist_ok=True)
+        filename = filename or f"{prefix}{epoch:0>6}"
+        file_path = os.path.join(folder, f"{filename}.npy")
+        np.save(file_path, trajectory) 
 
     def save_epoch(self, epoch):
         for which in self.model_names:
@@ -397,7 +403,7 @@ class Experiment:
         end = start + n_frame
         return video[:, start:end, ...]
 
-    def get_fake_data(self, n_frames=None, label_and_props=None, colors=None, mask=None):
+    def get_fake_data(self, n_frames=None, label_and_props=None, mask=None):
         n_frames = n_frames or self.config.video.generator_frames
         # Z.size() => (batch_size, n_frames, nz, 1, 1)
         Z, dz, _ = self.get_latent_sample(
@@ -442,20 +448,15 @@ class Experiment:
         device = device or self.device
         dataloader = dataloader or self.dataloader
         label_and_props = torch.tensor([])
-        colors = torch.tensor([])
         next_item = next(iter(dataloader))
         if isinstance(next_item, (tuple, list)):
             real_videos = next_item[0]
-            velocities = next_item[1]
-            mask = next_item[2][0]
-            if len(next_item) > 4:
-                colors = next_item[4]
-            if len(next_item) > 3:
-                label_and_props = next_item[3]
+            mask = next_item[1][0]
+            if len(next_item) > 2:
+                label_and_props = next_item[2]
         else:
             real_videos = next_item
-            velocities = next_item[1]
-            mask = next_item[2][0]
+            mask = next_item[1][0]
 
         real_videos = real_videos.to(
             device
@@ -463,22 +464,13 @@ class Experiment:
         real_videos = Variable(real_videos)
         label_and_props = label_and_props.to(device)
         label_and_props = Variable(label_and_props)
-        colors = colors.to(device)
-        colors = Variable(colors)
         mask = mask.to(device)
         mask = Variable(mask)
-        velocities = velocities.to(device)
-        velocities = Variable(velocities)
-        # real_videos_frames = real_videos.shape[2]
-
-        # real_img = real_videos[:, :, np.random.randint(0, real_videos_frames), :, :]
 
         real_data = {
             "videos": real_videos,
-            "velocities": velocities,
             "mask": mask,
             "label_and_props": label_and_props,
-            "colors": colors,
         }
 
         return real_data
@@ -561,10 +553,9 @@ class Experiment:
     def train_step(self):
         real_data = self.get_real_data()
         label_and_props = real_data["label_and_props"]
-        colors = real_data["colors"]
         mask = real_data["mask"]
 
-        fake_data = self.get_fake_data(label_and_props=label_and_props, colors=colors, mask=mask)
+        fake_data = self.get_fake_data(label_and_props=label_and_props,mask=mask)
         self.Dv.train()
         err, mean = update_models(
             rnn_type=self.architecture,
@@ -631,22 +622,30 @@ class Experiment:
                         mean["Dv_fake"],
                     )
                 )
+            if epoch % self.save_fake_video_every == 0 or last_epoch:
+                self.save_trajectory(
+                    self.config.paths.output,
+                    fake_videos[0].detach().cpu().numpy(),
+                    epoch=epoch,
+                    prefix="fake_",
+                )
 
-            # if epoch % self.save_fake_video_every == 0 or last_epoch:
-            #     self.save_video(
-            #         self.config.paths.output,
-            #         fake_videos[0].detach().cpu().numpy().transpose(1, 2, 3, 0),
-            #         epoch=epoch,
-            #         prefix="fake_",
-            #     )
-
-            # if epoch % self.save_real_video_every == 0 or last_epoch:
-            #     self.save_video(
-            #         self.config.paths.output,
-            #         real_videos[0].detach().cpu().numpy().transpose(1, 2, 3, 0),
-            #         epoch=epoch,
-            #         prefix="real_",
-            #     )
+            if epoch % self.save_real_video_every == 0 or last_epoch:
+                self.save_trajectory(
+                    self.config.paths.output,
+                    real_videos[0].detach().cpu().numpy(),
+                    epoch=epoch,
+                    prefix="real_",
+                )
+            
+            if epoch % self.make_comparison_every == 0 or last_epoch:
+                self.dataset.comparison(
+                    fake_videos[0].detach().cpu().numpy(), 
+                    real_data["mask"].detach().cpu().numpy(), 
+                    self.config.paths.output,
+                    epoch = epoch,
+                    prefix="comp_"
+                )
 
             if epoch % self.save_model_every == 0 or last_epoch:
                 self.save_epoch(epoch)

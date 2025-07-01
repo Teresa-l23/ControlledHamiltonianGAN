@@ -114,7 +114,20 @@ class Pendulum(Environment):
         if not color:
             vid = np.expand_dims(np.max(vid, axis=-1), -1)
         return vid, ball_color
-
+    
+    def extract_q(self, traj, mask, frame_idx):
+        valid_idx = np.where(mask > 0)[0]
+        traj_t = traj[frame_idx][:, valid_idx]
+        x, y = traj_t[0], traj_t[1] 
+        q_t = np.arctan2(x, y)
+        return q_t
+    
+    def _convert_to_t2n_format(self, n_max=10):
+        q = self._rollout[0, :]
+        x1, y1 = self.length * np.sin(q), self.length * np.cos(q)
+        traj = np.stack([x1, y1], axis=1)[:, :, None]
+        return traj
+    
     def _sample_init_conditions(self, radius_bound):
         """Samples random initial conditions for the environment
 

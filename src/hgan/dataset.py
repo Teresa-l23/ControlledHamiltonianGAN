@@ -16,6 +16,7 @@ from hgan.hgn_datasets import (
     variable_physics_hgn,
 )
 from hgan.hgn.environments.environment_factory import EnvFactory
+import matplotlib.pyplot as plt
 
 
 class AviDataset(Dataset):
@@ -336,83 +337,61 @@ class HGNRealtimeDataset(Dataset):
     def __len__(self):
         return 50_000 if self.train else 10_000  # Blanchette 2021
     
-    def convert_to_t2n_format(
-            self,
-            system_name,
-            rollout,
-            n_max,
-            system_args
-        ):
+    def plot_2d_trajectory_comparison(self, traj, mask, real, save_path, label1='Fake', label2='Real'):
+        import os
+        
+        valid_idx = np.where(mask > 0)[0]
+        N_eff = len(valid_idx)
+        T = traj.shape[0]
 
-            T, D = rollout.shape
+        fig, axes = plt.subplots(1, N_eff, figsize=(4 * N_eff, 4))
+        if N_eff == 1:
+            axes = [axes]
 
-            if system_name == 'Pendulum':
-                theta = rollout[:, 0]
-                theta_dot = rollout[:, 1]
-                l = system_args.get("length", 1.0)
-                if isinstance(l, torch.Tensor): l = l.item()
-                x = l * np.sin(theta)
-                y = -l * np.cos(theta)
-                dx = l * theta_dot * np.cos(theta)
-                dy = l * theta_dot * np.sin(theta)
-                traj = np.stack([x, y], axis=1)[:, :, None]        # [T, 2, 1]
-                velocity = np.stack([dx, dy], axis=1)[:, :, None]  # [T, 2, 1]
-                n_particles = 1
-
-            elif system_name == 'ChaoticPendulum':
-                theta1, theta2 = rollout[:, 0], rollout[:, 1]
-                omega1, omega2 = rollout[:, 2], rollout[:, 3]
-                l_raw = system_args.get("length", 1.0)
-                if isinstance(l_raw, list):
-                    l1, l2 = [float(li) for li in l_raw]
-                else:
-                    l1 = l2 = float(l_raw)
-                x1 = l1 * np.sin(theta1)
-                y1 = -l1 * np.cos(theta1)
-                x2 = x1 + l2 * np.sin(theta2)
-                y2 = y1 - l2 * np.cos(theta2)
-                traj = np.stack([[x1, x2], [y1, y2]], axis=1).transpose(2, 1, 0)  # [T, 2, 2]
-                dx1 = l1 * omega1 * np.cos(theta1)
-                dy1 = l1 * omega1 * np.sin(theta1)
-                dx2 = dx1 + l2 * omega2 * np.cos(theta2)
-                dy2 = dy1 + l2 * omega2 * np.sin(theta2)
-                velocity = np.stack([[dx1, dx2], [dy1, dy2]], axis=1).transpose(2, 1, 0)  # [T, 2, 2]
-                n_particles = 2
-            
-            elif system_name == 'Spring':
-                n_particles = 1
-                x = rollout[:, :n_particles]
-                y = np.zeros_like(x)
-                dx = rollout[:, n_particles:2 * n_particles]
-                dy = np.zeros_like(dx)
-                traj = np.stack([x, y], axis=1)       # [T, 2, 1]
-                velocity = np.stack([dx, dy], axis=1) # [T, 2, 1]
-
-            elif system_name == 'NObjectGravity':
-                assert D % 2 == 0, "Invalid state dimension"
-                n_particles = D // 4  # (x,y) + (vx,vy)
-                pos = rollout[:, :2 * n_particles].reshape(n_particles, 2, T).transpose(2, 1, 0)
-                vel = rollout[:, 2 * n_particles:].reshape(n_particles, 2, T).transpose(2, 1, 0)
-                traj = pos
-                velocity = vel
-
+        for i, idx in enumerate(valid_idx):
+            ax = axes[i]
+            if self.system_name == "Spring":
+                time = np.arange(T)
+                ax.plot(time, traj[:, 0, idx], label=label1, color='red', linestyle='--')
+                ax.plot(time, real[:, 0, idx], label=label2, color='blue')
+                ax.set_xlabel('Time')
+                ax.set_ylabel('x')
             else:
-                raise ValueError(f"Unsupported system: {system_name}")
+                ax.plot(traj[:, 0, idx], traj[:, 1, idx], label=label1, color='red', linestyle='--')
+                ax.plot(real[:, 0, idx], real[:, 1, idx], label=label2, color='blue')
+                ax.set_xlabel('x')
+                ax.set_ylabel('y')
 
-            # Padding position
-            padded = torch.zeros((T, 2, n_max), dtype=torch.float32)
-            padded[:, :, :n_particles] = torch.tensor(traj, dtype=torch.float32)
+            ax.set_title(f'Particle {idx}')
+            ax.grid(True)
+            ax.legend()
 
-            # Padding velocity
-            velocity_padded = torch.zeros((T, 2, n_max), dtype=torch.float32)
-            velocity_padded[:, :, :n_particles] = torch.tensor(velocity, dtype=torch.float32)
+        title = "Trajectory Rollout Comparison"
+        plt.suptitle(title)
+        plt.tight_layout()
+        plt.savefig(save_path)
+        plt.close()
 
-            # Mask
-            mask = torch.zeros(n_max, dtype=torch.float32)
-            mask[:n_particles] = 1.0
+        # Save trajectory data
+        save_data_path = os.path.splitext(save_path)[0] + '_data.npz'
+        np.savez(save_data_path, fake=traj, real=real, mask=mask)
 
-            return padded, velocity_padded, mask
+    def _compute_momentum(self, q_t, q_t1):
+        mass = np.atleast_1d(self.system_args["mass"])
+        p = mass[:, None] * (q_t1 - q_t) / self.delta
+        return p.reshape(q_t.shape)
     
+    def pad_traj(self, traj, n_max = 10):
+        n_particles = traj.shape[2]
+        T = traj.shape[0]
+        padded = torch.zeros((T, 2, n_max), dtype=torch.float32)
+        padded[:, :, :n_particles] = torch.tensor(traj, dtype=torch.float32)
+
+        mask = torch.zeros(n_max, dtype=torch.float32)
+        mask[:n_particles] = 1.0
+
+        return padded, mask
+
     def __getitem__(self, item):
         if self.system_index is None:
             system_index = np.random.choice(self.n_systems)
@@ -425,13 +404,13 @@ class HGNRealtimeDataset(Dataset):
             self.system_physics_constant
         ][system_name]
 
-        system_args = {
+        self.system_args = {
             k: (v() if not isinstance(v, list) else [_v() for _v in v])
             for k, v in system_args_which.items()
         }
 
-        system_name = self.system_name_mapping[system_name]
-        system = EnvFactory.get_environment(system_name, **system_args)
+        self.system_name = self.system_name_mapping[system_name]
+        system = EnvFactory.get_environment(self.system_name, **self.system_args)
         # We're not using self.total_frames here at all, since we only want self.num_frames from
         # the rollout, and the rollouts are randomly initialized anyway.
 
@@ -440,7 +419,7 @@ class HGNRealtimeDataset(Dataset):
         # Rollouts are not guaranteed to give us self.num_frames in certain
         # cases where solve_ivp fails - keep trying till they do.
         while rollout is None or rollout.shape[0] != self.num_frames:
-            rollouts = system.sample_random_rollouts(
+            rollout = system.sample_random_rollouts(
                 number_of_frames=self.num_frames,
                 delta_time=self.delta,
                 number_of_rollouts=1,
@@ -451,8 +430,7 @@ class HGNRealtimeDataset(Dataset):
                 seed=None,
                 constant_color=self.system_color_constant,
             )
-            rollout = rollouts[0].transpose()
-        padded, v_padded, mask = self.convert_to_t2n_format(system_name,rollout,10,system_args)
+        padded, mask = self.pad_traj(rollout)
 
         labels_and_props = torch.cat(
             (
@@ -461,11 +439,21 @@ class HGNRealtimeDataset(Dataset):
             )
         )
 
-        color_vec = torch.zeros(self.ndim_color)
-        colors = torch.tensor(np.array(colors).flatten().astype(np.float32))[
-            : self.ndim_color
-        ]
-        color_vec[: len(colors)] = colors
-        rollout = rollout.astype(np.float32)
+        return padded, mask, labels_and_props
+    
+    def comparison(self, trajectory, mask, folder, epoch, prefix, frame_idx=0):
+        os.makedirs(folder, exist_ok=True)
+        filename = f"{prefix}{epoch:0>6}"
+        file_path = os.path.join(folder, f"{filename}.jpg")
+        # print(f"traj{trajectory[0]}\n")
 
-        return padded, v_padded, mask, labels_and_props, color_vec
+        system = EnvFactory.get_environment(self.system_name, **self.system_args)
+        q = system.extract_q(trajectory, mask, frame_idx=frame_idx)
+        q1 = system.extract_q(trajectory, mask, frame_idx=frame_idx+1)
+        p = self._compute_momentum(q,q1)
+        
+        #求解器会失灵提前终止
+        rollout = system.calculate_fixed_rollout(q, p, number_of_frames=self.num_frames, delta_time=self.delta)
+
+        self.plot_2d_trajectory_comparison(trajectory, mask, rollout, file_path)
+   

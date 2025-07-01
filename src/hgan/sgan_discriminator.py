@@ -615,8 +615,6 @@ class TrajectoryDiscriminator(nn.Module):
         Output:
         - scores: Tensor of shape (batch,) with real/fake scores
         """
-        # 这里应该是计算非0的轨迹，为什么在实现上必须要扩展为10？使用一下mask
-        # img报错
         if traj.shape[0] != label_props_colors.shape[0]:
             label_props_colors = label_props_colors.repeat_interleave(traj.shape[0]//label_props_colors.shape[0], dim = 0)
         traj, traj_rel, seq_start_end = self.preprocess_traj(traj)

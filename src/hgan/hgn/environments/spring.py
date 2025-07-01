@@ -118,6 +118,17 @@ class Spring(Environment):
         if not color:
             vid = np.expand_dims(np.max(vid, axis=-1), -1)
         return vid, ball_color
+    
+    def extract_q(self, traj, mask, frame_idx):
+        valid_idx = np.where(mask > 0)[0]
+        traj_t = traj[frame_idx][:, valid_idx]
+        return traj_t[0]
+    
+    def _convert_to_t2n_format(self, n_max=10):
+        q = self._rollout[0, :]
+        x1, y1 = q, np.zeros_like(q)
+        traj = np.stack([x1, y1], axis=1)[:, :, None]
+        return traj
 
     def _sample_init_conditions(self, radius_bound):
         """Samples random initial conditions for the environment

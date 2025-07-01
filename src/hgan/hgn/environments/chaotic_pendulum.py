@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-
 from environment import Environment, visualize_rollout
 
 
@@ -163,7 +162,27 @@ class ChaoticPendulum(Environment):
         if not color:
             vid = np.expand_dims(np.max(vid, axis=-1), -1)
         return vid, ball_colors
+    
+    def extract_q(self, traj, mask, frame_idx):
+        valid_idx = np.where(mask > 0)[0]
+        traj_t = traj[frame_idx][:, valid_idx]
+        x, y = traj_t[0], traj_t[1]
 
+        x1_m1, y1_m1 = x[0::2], y[0::2]
+        x2_m2, y2_m2 = x[1::2], y[1::2]
+        theta1 = np.arctan2(x1_m1, y1_m1)
+        theta2 = np.arctan2(x2_m2 - x1_m1, y2_m2 - y1_m1)
+        q_t = np.stack([theta1, theta2], axis=0)
+        return q_t
+    
+    def _convert_to_t2n_format(self, n_max=10):
+        q = self._rollout.reshape(2,2,-1)[0,:,:]
+        x1, y1 = self.length * np.sin(q[0, :]), self.length * np.cos(q[0, :])
+        x2, y2 = self.length * np.sin(q[0, :]) + self.length * np.sin(q[1, :]), self.length * np.cos(q[0, :]) + self.length * np.cos(q[1, :])
+        traj = np.stack([[x1, x2], [y1, y2]], axis=1).transpose(2,1,0)
+
+        return traj
+    
     def _sample_init_conditions(self, radius):
         """Samples random initial conditions for the environment
 
