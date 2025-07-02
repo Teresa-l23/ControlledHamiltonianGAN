@@ -53,6 +53,7 @@ def update_Dv(
     label_props = real_data["label_and_props"]
     fake_videos = fake_data["videos"]
     dis_v.zero_grad()
+    # print(real_videos.shape,fake_videos.shape)
 
     # needed for r1 loss
     real_videos.requires_grad = False if rnn_type == "gru" else True

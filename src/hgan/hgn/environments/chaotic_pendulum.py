@@ -172,6 +172,7 @@ class ChaoticPendulum(Environment):
         x2_m2, y2_m2 = x[1::2], y[1::2]
         theta1 = np.arctan2(x1_m1, y1_m1)
         theta2 = np.arctan2(x2_m2 - x1_m1, y2_m2 - y1_m1)
+        # print(theta1.shape, theta2.shape)
         q_t = np.stack([theta1, theta2], axis=0)
         return q_t
     

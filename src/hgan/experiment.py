@@ -251,7 +251,7 @@ class Experiment:
     def save_trajectory(self, folder, trajectory, epoch=None, filename=None, prefix="trajectory_"):
         os.makedirs(folder, exist_ok=True)
         filename = filename or f"{prefix}{epoch:0>6}"
-        file_path = os.path.join(folder, f"{filename}.npy")
+        file_path = os.path.join(folder, f"{filename}.npz")
         np.save(file_path, trajectory) 
 
     def save_epoch(self, epoch):
@@ -451,12 +451,12 @@ class Experiment:
         next_item = next(iter(dataloader))
         if isinstance(next_item, (tuple, list)):
             real_videos = next_item[0]
-            mask = next_item[1][0]
+            mask = next_item[1]
             if len(next_item) > 2:
                 label_and_props = next_item[2]
         else:
             real_videos = next_item
-            mask = next_item[1][0]
+            mask = next_item[1]
 
         real_videos = real_videos.to(
             device
@@ -466,6 +466,7 @@ class Experiment:
         label_and_props = Variable(label_and_props)
         mask = mask.to(device)
         mask = Variable(mask)
+        # print(f"real_videos{real_videos.shape}\nlabel{label_and_props.shape}\nmask{mask}\n")
 
         real_data = {
             "videos": real_videos,
@@ -625,7 +626,7 @@ class Experiment:
             if epoch % self.save_fake_video_every == 0 or last_epoch:
                 self.save_trajectory(
                     self.config.paths.output,
-                    fake_videos[0].detach().cpu().numpy(),
+                    fake_videos[-1].detach().cpu().numpy(),
                     epoch=epoch,
                     prefix="fake_",
                 )
@@ -633,15 +634,15 @@ class Experiment:
             if epoch % self.save_real_video_every == 0 or last_epoch:
                 self.save_trajectory(
                     self.config.paths.output,
-                    real_videos[0].detach().cpu().numpy(),
+                    real_videos[-1].detach().cpu().numpy(),
                     epoch=epoch,
                     prefix="real_",
                 )
             
             if epoch % self.make_comparison_every == 0 or last_epoch:
                 self.dataset.comparison(
-                    fake_videos[0].detach().cpu().numpy(), 
-                    real_data["mask"].detach().cpu().numpy(), 
+                    fake_videos[-1].detach().cpu().numpy(), 
+                    real_data["mask"][-1].detach().cpu().numpy(), 
                     self.config.paths.output,
                     epoch = epoch,
                     prefix="comp_"

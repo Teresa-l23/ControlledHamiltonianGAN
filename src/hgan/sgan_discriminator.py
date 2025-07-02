@@ -208,12 +208,14 @@ class PoolHiddenNet(nn.Module):
         - pool_h: Tensor of shape (batch/n_particle, bottleneck_dim)
         """
         pool_h = []
-        for _, (start, end) in enumerate(seq_start_end):
+        
+        for i, (start, end) in enumerate(seq_start_end):
             start = start.item()
             end = end.item()
             num_ped = end - start
             curr_hidden = h_states.view(-1, self.h_dim)[start:end]
             curr_end_pos = end_pos[start:end]
+            curr_mask = mask[i]
             # Repeat -> H1, H2, H1, H2
             curr_hidden_1 = curr_hidden.repeat(num_ped, 1)
             # Repeat position -> P1, P2, P1, P2
@@ -225,7 +227,7 @@ class PoolHiddenNet(nn.Module):
             mlp_h_input = torch.cat([curr_rel_embedding, curr_hidden_1], dim=1)
             curr_pool_h = self.mlp_pre_pool(mlp_h_input)
             curr_pool_h = curr_pool_h.view(num_ped, num_ped, -1).max(1)[0]
-            valid_mask = mask.bool()
+            valid_mask = curr_mask.bool()
             curr_pool_h = curr_pool_h[valid_mask]
             curr_pool_h = curr_pool_h.mean(dim=0, keepdim=True)
             pool_h.append(curr_pool_h)
@@ -615,11 +617,10 @@ class TrajectoryDiscriminator(nn.Module):
         Output:
         - scores: Tensor of shape (batch,) with real/fake scores
         """
-        if traj.shape[0] != label_props_colors.shape[0]:
-            label_props_colors = label_props_colors.repeat_interleave(traj.shape[0]//label_props_colors.shape[0], dim = 0)
+        # if traj.shape[0] != label_props_colors.shape[0]:
+        #     label_props_colors = label_props_colors.repeat_interleave(traj.shape[0]//label_props_colors.shape[0], dim = 0)
         traj, traj_rel, seq_start_end = self.preprocess_traj(traj)
         final_h = self.encoder(traj_rel)
-        # print(traj[0],final_h[0])
         # Note: In case of 'global' option we are using start_pos as opposed to
         # end_pos. The intution being that hidden state has the whole
         # trajectory and relative postion at the start when combined with
@@ -631,8 +632,6 @@ class TrajectoryDiscriminator(nn.Module):
                 final_h.squeeze(), mask, seq_start_end, traj[0]
             )
         if self.n_cond_dim > 0 :
-            if self.d_type == 'local':
-                label_props_colors = label_props_colors.repeat_interleave(seq_start_end[:, 1] - seq_start_end[:, 0], dim=0)
             classifier_input = torch.cat([classifier_input, label_props_colors], dim=1)
         scores = self.real_classifier(classifier_input).squeeze()
         # print(classifier_input[0],scores[:10])

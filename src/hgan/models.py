@@ -336,38 +336,36 @@ class Generator_I(nn.Module):
         return output
 
 class TrajectoryGenerator(nn.Module):
-    def __init__(self, nz=60, hidden_dim=128, traj_len=30, n_particles=10, ngpu=1):
+    def __init__(self, nz=60, hidden_dim=512, traj_len=30, n_particles=10, ngpu=1):
         super(TrajectoryGenerator, self).__init__()
         self.ngpu = ngpu
         self.traj_len = traj_len
         self.n_particles = n_particles
         self.traj_dim = 2
-
-        self.output_dim = traj_len * self.traj_dim * n_particles  # 展平后的维度
-
+        self.output_dim = self.traj_dim * n_particles
+        
         self.main = nn.Sequential(
             nn.Linear(nz, hidden_dim),
-            nn.ReLU(inplace=True),
+            nn.Softplus(),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(inplace=True),
+            nn.Softplus(),
             nn.Linear(hidden_dim, self.output_dim),
-            nn.Tanh(), 
+            nn.Tanh(),  
         )
 
     def forward(self, z, mask):
-        batch_size = z.size(0)
+        batch_size = z.size(0)//self.traj_len
         if isinstance(z.data, torch.cuda.FloatTensor) and self.ngpu > 1:
             output = nn.parallel.data_parallel(self.main, z, range(self.ngpu))
         else:
             output = self.main(z)
         output = output.view(batch_size, self.traj_len, self.traj_dim, self.n_particles)
-
-
-        mask = mask.view(1, 1, 1, self.n_particles)
-        mask = mask.expand(batch_size, self.traj_len, self.traj_dim, self.n_particles) 
+        mask = mask.view(batch_size, 1, 1, self.n_particles)
+        mask = mask.expand(batch_size, self.traj_len, self.traj_dim, self.n_particles)
         traj = output * mask
-
+        
         return traj
+    
 class GRU(nn.Module):
     """
     Notes

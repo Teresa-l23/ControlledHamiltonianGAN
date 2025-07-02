@@ -352,13 +352,13 @@ class HGNRealtimeDataset(Dataset):
             ax = axes[i]
             if self.system_name == "Spring":
                 time = np.arange(T)
-                ax.plot(time, traj[:, 0, idx], label=label1, color='red', linestyle='--')
-                ax.plot(time, real[:, 0, idx], label=label2, color='blue')
+                ax.plot(time, traj[:, 0, idx], label=label1, color='red')
+                ax.plot(time, real[:, 0, idx], label=label2, color='blue', linestyle='--')
                 ax.set_xlabel('Time')
                 ax.set_ylabel('x')
             else:
-                ax.plot(traj[:, 0, idx], traj[:, 1, idx], label=label1, color='red', linestyle='--')
-                ax.plot(real[:, 0, idx], real[:, 1, idx], label=label2, color='blue')
+                ax.plot(traj[:, 0, idx], traj[:, 1, idx], label=label1, color='red')
+                ax.plot(real[:, 0, idx], real[:, 1, idx], label=label2, color='blue', linestyle='--')
                 ax.set_xlabel('x')
                 ax.set_ylabel('y')
 
