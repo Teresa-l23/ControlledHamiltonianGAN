@@ -1,5 +1,7 @@
 import torch
 from torch.autograd import Variable, grad
+import torch.nn.functional as F
+
 
 
 def bp_i(*, label, criterion, dis_i, inputs, label_props_colors, y, retain=False):
@@ -25,6 +27,13 @@ def bp_v(*, label, criterion, dis_v, inputs, label_props_colors, video_mask, y, 
 
     return err.item(), outputs  # .data.mean()
 
+def bce(*, label, dis_v, inputs, label_props_colors, video_mask, y, retain=False):
+    outputs = dis_v(inputs, label_props_colors,video_mask)
+    labels = torch.full_like(outputs, fill_value=y)
+    err = F.binary_cross_entropy(outputs, labels)
+    err.backward(retain_graph=retain)
+
+    return err.item(), outputs  # .data.mean()
 
 def r1_loss(r1_gamma, real_out, real_input):
     grad_real = grad(outputs=real_out.sum(), inputs=real_input, create_graph=True)[0]
@@ -34,6 +43,15 @@ def r1_loss(r1_gamma, real_out, real_input):
 
     return grad_penalty
 
+def print_grad_stats(model, name=""):
+    total = 0
+    for n, p in model.named_parameters():
+        if p.grad is not None:
+            grad = p.grad.detach()
+            print(f"[{name}] Param: {n}, grad mean: {grad.mean().item():.5f}, std: {grad.std().item():.5f}, max: {grad.abs().max().item():.5f}")
+            total += 1
+    if total == 0:
+        print(f"[{name}] No gradients found (possible gradient vanishing or unused in loss).")
 
 def update_Dv(
     *,
@@ -58,9 +76,9 @@ def update_Dv(
     # needed for r1 loss
     real_videos.requires_grad = False if rnn_type == "gru" else True
 
-    err_Dv_real, real_out = bp_v(
+    err_Dv_real, real_out = bce(
         label=label,
-        criterion=criterion,
+        # criterion=criterion,
         dis_v=dis_v,
         inputs=real_videos,
         label_props_colors=label_props,
@@ -74,9 +92,9 @@ def update_Dv(
     # r1_loss_value = 0
     # if r1_gamma != 0:
     #     r1_loss_value = r1_loss(r1_gamma, real_out, real_videos)
-    err_Dv_fake, fake_out = bp_v(
+    err_Dv_fake, fake_out = bce(
         label=label,
-        criterion=criterion,
+        # criterion=criterion,
         dis_v=dis_v,
         inputs=fake_videos.detach(),
         label_props_colors=label_props,
@@ -179,9 +197,9 @@ def update_G(
 
     # video. notice retain=True for back prop twice
     # retain=True for back prop three times
-    err_Gv, _ = bp_v(
+    err_Gv, _ = bce(
         label=label,
-        criterion=criterion,
+        # criterion=criterion,
         dis_v=model_dv,
         inputs=fake_data["videos"],
         label_props_colors=label_props_colors,

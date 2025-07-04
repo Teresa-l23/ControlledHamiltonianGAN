@@ -163,3 +163,4 @@ cython_debug/
 src/hgan/_version.py
 src/hgan/output/
 src/slurm-*
+TimeGAN

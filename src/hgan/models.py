@@ -349,23 +349,124 @@ class TrajectoryGenerator(nn.Module):
             nn.Softplus(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.Softplus(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Softplus(),
             nn.Linear(hidden_dim, self.output_dim),
-            nn.Tanh(),  
+            # Optionally: no activation, or add LayerNorm
         )
 
     def forward(self, z, mask):
-        batch_size = z.size(0)//self.traj_len
+        batch_size = z.shape[0]
         if isinstance(z.data, torch.cuda.FloatTensor) and self.ngpu > 1:
             output = nn.parallel.data_parallel(self.main, z, range(self.ngpu))
         else:
             output = self.main(z)
         output = output.view(batch_size, self.traj_len, self.traj_dim, self.n_particles)
-        mask = mask.view(batch_size, 1, 1, self.n_particles)
-        mask = mask.expand(batch_size, self.traj_len, self.traj_dim, self.n_particles)
+        # mask = mask.view(-1, 1, 1, self.n_particles).repeat_interleave(batch_size//mask.shape[0], dim = 0)
+        mask = mask.view(-1, 1, 1, self.n_particles).expand(batch_size, self.traj_len, self.traj_dim, self.n_particles)
         traj = output * mask
-        
         return traj
+
+class FiLMLayer(nn.Module):
+    def __init__(self, feature_dim, cond_dim):
+        super().__init__()
+        self.gamma_fc = nn.Linear(cond_dim, feature_dim)
+        self.beta_fc = nn.Linear(cond_dim, feature_dim)
+
+    def forward(self, x, cond):
+        """
+        x: [batch, T, feature_dim]
+        cond: [batch, T, cond_dim]
+        """
+        gamma = self.gamma_fc(cond)
+        beta = self.beta_fc(cond)
+        return gamma * x + beta
+
+class FiLMDecoder(nn.Module):
+    def __init__(self, latent_dim, cond_dim, hidden_dim=128, num_layers = 3, traj_len=30, n_particles=10):
+        super().__init__()
+        self.traj_len = traj_len
+        self.n_particles = n_particles
+        self.traj_dim = 2
+        self.output_dim = self.traj_dim * n_particles
+
+        self.layers = nn.ModuleList()
+        self.film_layers = nn.ModuleList()
+
+        in_dim = latent_dim
+        for i in range(num_layers):
+            self.layers.append(nn.Linear(in_dim, hidden_dim))
+            self.film_layers.append(FiLMLayer(hidden_dim, cond_dim))
+            in_dim = hidden_dim
+
+        self.output_layer = nn.Linear(hidden_dim, self.output_dim)
+
+    def forward(self, latent_seq, cond, mask):
+        """
+        latent_seq: [batch, T, latent_dim]
+        cond: [batch, T, cond_dim]
+        mask: [batch * T, n_particles] or [batch, n_particles]
+        """
+        import torch.nn.functional as F
+
+        batch_size, T, _ = latent_seq.shape
+        x = latent_seq  # [batch, T, latent_dim]
+
+        for linear, film in zip(self.layers, self.film_layers):
+            x = linear(x)
+            x = film(x, cond)
+            x = F.relu(x)
+
+        x = self.output_layer(x)  # [batch, T, traj_dim * n_particles]
+        x = x.view(batch_size, T, self.traj_dim, self.n_particles)  # [batch, T, 2, n_particles]
+
+        # Expand and apply mask
+        mask = mask.view(batch_size, 1, 1, self.n_particles)
+        mask = mask.expand(batch_size, T, self.traj_dim, self.n_particles)
+        traj = x * mask  # Apply mask to zero-out invalid particles
+        return traj    
+
+class TrajectoryDiscriminator(nn.Module):
     
+    def __init__(self, cond_dim, hidden_dim=128, num_layers=2, pos_dim = 2, bidirectional=True):
+        super().__init__()
+        self.cond_dim = cond_dim
+        self.input_dim = pos_dim*10 + cond_dim  # 每帧输入 = 轨迹 + 条件向量
+
+        self.rnn = nn.GRU(
+            input_size=self.input_dim,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
+            bidirectional=bidirectional
+        )
+        rnn_out_dim = hidden_dim * 2 if bidirectional else hidden_dim
+
+        self.fc = nn.Sequential(
+            nn.Linear(rnn_out_dim, 1),
+            nn.Sigmoid()
+        )
+    def forward(self, traj, cond, mask):
+        """
+        Args:
+            traj: [batch, T, pos_dim]
+            cond: [batch, cond_dim]
+
+        Returns:
+            score_seq: [batch, 1]
+        """
+        batch_size, T, _, _ = traj.shape
+
+        traj_flat = traj.permute(0, 1, 3, 2).reshape(batch_size, T, -1)  # [batch, T, 2*N]
+
+        cond_expanded = cond.unsqueeze(1).expand(batch_size, T, -1)
+
+        x = torch.cat([traj_flat, cond_expanded], dim=-1)  # [batch, T, 2*N + cond_dim]
+
+        rnn_out, _ = self.rnn(x)
+        score_seq = self.fc(rnn_out)
+        return score_seq
+
 class GRU(nn.Module):
     """
     Notes

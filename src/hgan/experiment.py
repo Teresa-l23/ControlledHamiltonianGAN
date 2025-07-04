@@ -16,9 +16,9 @@ from hgan.models import GRU, HNNSimple, HNNPhaseSpace, HNNMass
 from hgan.dataset import RealtimeDataset, HGNRealtimeDataset, ToyPhysicsDatasetNPZ
 from hgan.utils import setup_reproducibility, timeSince
 from hgan.fvd import compute_fvd
-from hgan.models import Discriminator_I, Discriminator_V, Generator_I, TrajectoryGenerator
+from hgan.models import Discriminator_I, Discriminator_V, Generator_I, TrajectoryGenerator, FiLMDecoder, TrajectoryDiscriminator
 from hgan.updates import update_models
-from hgan.sgan_discriminator import TrajectoryDiscriminator
+from hgan.sgan_discriminator import TrajectoryDiscriminator as SganDiscriminator
 
 
 logger = logging.getLogger(__name__)
@@ -146,10 +146,13 @@ class Experiment:
         #     T=config.video.discriminator_frames,
         #     n_label_and_props=n_label_and_props,
         # ).to(self.device)
+        # self.Dv = SganDiscriminator(
+
+        # )
         self.Dv = TrajectoryDiscriminator(
-            config.video.generator_frames,
-            config.experiment.ndim_label + config.experiment.ndim_physics,
-            d_type = 'global'
+            self.ndim_label + self.ndim_physics,
+            hidden_dim=self.ndim_discriminator_hiddenlayer,
+            bidirectional = True
         ).to(self.device)        
         # self.Gi = Generator_I(
         #     self.ndim_channel,
@@ -158,12 +161,19 @@ class Experiment:
         #     ngpu=self.ngpu,
         # ).to(self.device)
         self.Gi = TrajectoryGenerator(
-            self.nz + self.ndim_label,
-            self.ndim_hiddenlayer,
+            self.nz + self.ndim_label + self.ndim_physics,
+            self.ndim_generator_hiddenlayer,
             config.video.generator_frames,
             self.max_n,
             ngpu=self.ngpu,
         ).to(self.device)
+        # self.Gi = FiLMDecoder(
+        #     self.nz,
+        #     self.ndim_label + self.ndim_physics,
+        #     self.ndim_hiddenlayer,
+        #     config.video.generator_frames,
+        #     self.max_n,
+        # ).to(self.device)
         rnn_class = {
             "gru": GRU,
             "hnn_simple": HNNSimple,
@@ -413,22 +423,22 @@ class Experiment:
         )
         # trim => (batch_size, T, nz, 1, 1)
         Z = self.trim_video(video=Z, n_frame=n_frames)
-        Z_reshape = Z.contiguous().view(self.batch_size * n_frames, self.nz)
+        Z_reshape = Z.contiguous().view(self.batch_size, n_frames, self.nz)
 
         # Append label+color information; duplicating it for each frame
         # (batch_size, n) => (batch_size * n_frames, n, 1, 1)
 
-        label = label_and_props[:, : self.ndim_label]
+        # label = label_and_props[:, : self.ndim_label]
         # label_and_colors = torch.cat((label, colors), dim=1)
         label_reshape = (
-            label.unsqueeze(1)
+            label_and_props.unsqueeze(1)
             .repeat(1, n_frames, 1)
             .contiguous()
-            .view(self.batch_size * n_frames, -1)
         )
-        Z_reshape = torch.cat((Z_reshape, label_reshape), dim=1)
+        Z_reshape = torch.cat((Z_reshape, label_reshape), dim=2)
 
-        fake_videos = self.Gi(Z_reshape,mask)
+        # fake_videos = self.Gi(Z_reshape, label_reshape, mask)
+        fake_videos = self.Gi(Z_reshape, mask)
 
         fake_data = {"videos": fake_videos, "latent": Z, "dlatent": dz}
 
