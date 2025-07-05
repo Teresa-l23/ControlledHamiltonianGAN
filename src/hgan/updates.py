@@ -104,7 +104,6 @@ def update_Dv(
     Dv_fake_mean = fake_out.data.mean()
 
     err_Dv = err_Dv_real + err_Dv_fake #+ r1_loss_value
-
     optim_Dv.step()
 
     err_Dv = {"Dv_real": err_Dv_real, "Dv_fake": err_Dv_fake, "Dv": err_Dv}
@@ -207,6 +206,13 @@ def update_G(
         y=gamma,
         retain=True,
     )
+    # traj: [B, T, 2, N] 位置序列，粒子数 N
+    fake_videos = fake_data["videos"]
+    vel = fake_videos[:, 1:] -fake_videos[:, :-1]  # [B, T-1, 2, N]
+    vel_diff = vel[:, 1:] - vel[:, :-1]  # 加速度变化（jerk）
+    smooth_vel_loss = (vel_diff ** 2).mean()
+    smooth_vel_loss.backward(retain_graph=True)
+
     # images
     # retain=True for back prop three times
     # if rnn_type == "hnn_phase_space":
