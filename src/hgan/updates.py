@@ -206,12 +206,12 @@ def update_G(
         y=gamma,
         retain=True,
     )
-    # traj: [B, T, 2, N] 位置序列，粒子数 N
-    fake_videos = fake_data["videos"]
-    vel = fake_videos[:, 1:] -fake_videos[:, :-1]  # [B, T-1, 2, N]
-    vel_diff = vel[:, 1:] - vel[:, :-1]  # 加速度变化（jerk）
-    smooth_vel_loss = (vel_diff ** 2).mean()
-    smooth_vel_loss.backward(retain_graph=True)
+    # # traj: [B, T, 2, N] 
+    # fake_videos = fake_data["videos"]
+    # vel = fake_videos[:, 1:] -fake_videos[:, :-1]  # [B, T-1, 2, N]
+    # vel_diff = vel[:, 1:] - vel[:, :-1]  
+    # smooth_vel_loss = (vel_diff ** 2).mean()
+    # smooth_vel_loss.backward(retain_graph=True)
 
     # images
     # retain=True for back prop three times

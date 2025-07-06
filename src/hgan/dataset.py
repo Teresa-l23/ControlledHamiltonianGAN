@@ -337,19 +337,14 @@ class HGNRealtimeDataset(Dataset):
     def __len__(self):
         return 50_000 if self.train else 10_000  # Blanchette 2021
     
-    def compute_normalized_rmse(self, traj_gen, traj_real, eps=1e-8):
-        """
-        Normalized RMSE = RMSE / (max - min) over real trajectory
-        Avoids small error looking 'good' on static trajectories.
-        """
+    def compute_rmse(self, traj_gen, traj_real, eps=1e-8):
         traj_gen = np.array(traj_gen)
         traj_real = np.array(traj_real)
 
         diff = traj_gen - traj_real
         rmse = np.sqrt(np.mean(diff ** 2))
 
-        range_real = traj_real.max() - traj_real.min()
-        return rmse / (range_real + eps)
+        return rmse
     
     def plot_2d_trajectory_comparison(self, traj, mask, real, save_path, label1='Fake', label2='Real'):
         import os
@@ -383,7 +378,7 @@ class HGNRealtimeDataset(Dataset):
                 real_traj = real[:, :, idx]
 
             if T == T_real:
-                rmse = self.compute_normalized_rmse(fake_traj, real_traj, eps=1e-8)
+                rmse = self.compute_rmse(fake_traj, real_traj, eps=1e-8)
                 rmse_list.append(rmse)
                 ax.set_title(f'Particle {idx} (RMSE={rmse:.4f})')
             else:
