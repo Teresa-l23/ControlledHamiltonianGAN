@@ -337,17 +337,33 @@ class HGNRealtimeDataset(Dataset):
     def __len__(self):
         return 50_000 if self.train else 10_000  # Blanchette 2021
     
+    def compute_normalized_rmse(self, traj_gen, traj_real, eps=1e-8):
+        """
+        Normalized RMSE = RMSE / (max - min) over real trajectory
+        Avoids small error looking 'good' on static trajectories.
+        """
+        traj_gen = np.array(traj_gen)
+        traj_real = np.array(traj_real)
+
+        diff = traj_gen - traj_real
+        rmse = np.sqrt(np.mean(diff ** 2))
+
+        range_real = traj_real.max() - traj_real.min()
+        return rmse / (range_real + eps)
+    
     def plot_2d_trajectory_comparison(self, traj, mask, real, save_path, label1='Fake', label2='Real'):
         import os
         
         valid_idx = np.where(mask > 0)[0]
         N_eff = len(valid_idx)
         T = traj.shape[0]
+        T_real = real.shape[0]
 
         fig, axes = plt.subplots(1, N_eff, figsize=(4 * N_eff, 4))
         if N_eff == 1:
             axes = [axes]
-
+            
+        rmse_list = []
         for i, idx in enumerate(valid_idx):
             ax = axes[i]
             if self.system_name == "Spring":
@@ -356,17 +372,31 @@ class HGNRealtimeDataset(Dataset):
                 ax.plot(time, real[:, 0, idx], label=label2, color='blue', linestyle='--')
                 ax.set_xlabel('Time')
                 ax.set_ylabel('x')
+                fake_traj = traj[:, 0, idx]
+                real_traj = real[:, 0, idx]
             else:
                 ax.plot(traj[:, 0, idx], traj[:, 1, idx], label=label1, color='red')
                 ax.plot(real[:, 0, idx], real[:, 1, idx], label=label2, color='blue', linestyle='--')
                 ax.set_xlabel('x')
                 ax.set_ylabel('y')
+                fake_traj = traj[:, :, idx]
+                real_traj = real[:, :, idx]
 
-            ax.set_title(f'Particle {idx}')
+            if T == T_real:
+                rmse = self.compute_normalized_rmse(fake_traj, real_traj, eps=1e-8)
+                rmse_list.append(rmse)
+                ax.set_title(f'Particle {idx} (RMSE={rmse:.4f})')
+            else:
+                ax.set_title(f'Particle {idx} (T mismatch)')
+
             ax.grid(True)
             ax.legend()
 
-        title = "Trajectory Rollout Comparison"
+        if T == T_real:
+            mean_rmse = np.mean(rmse_list)
+            title = f"{self.system_name} (RMSE={mean_rmse:.4f})"
+        else:
+            title = f"{self.system_name} (T mismatch)"
         plt.suptitle(title)
         plt.tight_layout()
         plt.savefig(save_path)
