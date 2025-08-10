@@ -25,6 +25,30 @@ logger = logging.getLogger(__name__)
 
 
 class Experiment:
+
+    def plot_only_mode(self, folder=None, pattern='*_data.npz',new_tag='new'):
+        import glob
+        import os
+        folder = folder or self.config.paths.output
+        npz_files = sorted(glob.glob(os.path.join(folder, pattern)))
+        if not npz_files:
+            print(f"No npz files found in {folder} with pattern {pattern}")
+            return
+        for npz_file in npz_files:
+            data = np.load(npz_file)
+            if not all(k in data for k in ("fake", "real", "mask", "system_name")):
+                print(f"Skip {npz_file}, missing keys.")
+                continue
+            fake = data["fake"]
+            real = data["real"]
+            mask = data["mask"]
+            sys_name = data["system_name"]
+            base = os.path.basename(npz_file)
+            parts = base.split('_')
+            save_base = f"{parts[0]}_{parts[1]}_{new_tag}.jpg"
+            save_path = os.path.join(os.path.dirname(npz_file), save_base)
+            self.dataset.plot_2d_trajectory_comparison(fake, mask, real, save_path, system_name=sys_name)
+    
     def __init__(self, config):
         self.dataloader = None
         self.model_names = (
@@ -262,7 +286,8 @@ class Experiment:
         os.makedirs(folder, exist_ok=True)
         filename = filename or f"{prefix}{epoch:0>6}"
         file_path = os.path.join(folder, f"{filename}.npz")
-        np.save(file_path, trajectory) 
+        # 保存 trajectory 和 mask 到同一个 npz 文件
+        np.savez(file_path, trajectory=trajectory)
 
     def save_epoch(self, epoch):
         for which in self.model_names:

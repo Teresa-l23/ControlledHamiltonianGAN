@@ -16,6 +16,11 @@ def get_parser():
         required=True,
         help="Path to configuration.ini specifying experiment parameters",
     )
+    parser.add_argument(
+        "--plot-only",
+        action="store_true",
+        help="Only plot from output npz files, do not train",
+    )
     return parser
 
 
@@ -31,4 +36,7 @@ def main(*args):
     logger.addHandler(logging_file_handler)
 
     experiment = Experiment(config)
-    experiment.train()
+    if getattr(args, "plot_only", False):
+        experiment.plot_only_mode()
+    else:
+        experiment.train()

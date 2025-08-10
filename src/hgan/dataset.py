@@ -346,60 +346,60 @@ class HGNRealtimeDataset(Dataset):
 
         return rmse
     
-    def plot_2d_trajectory_comparison(self, traj, mask, real, save_path, label1='Fake', label2='Real'):
+    def plot_2d_trajectory_comparison(self, traj, mask, real, save_path, label1='Fake', label2='Real', system_name=None):
         import os
-        
         valid_idx = np.where(mask > 0)[0]
         N_eff = len(valid_idx)
         T = traj.shape[0]
         T_real = real.shape[0]
 
-        fig, axes = plt.subplots(1, N_eff, figsize=(4 * N_eff, 4))
-        if N_eff == 1:
-            axes = [axes]
-            
+        # 优先用传入的 system_name，否则用 self.system_name
+        sys_name = system_name if system_name is not None else getattr(self, 'system_name', 'Unknown')
+
+        plt.figure(figsize=(6, 6))
+        colors = plt.cm.tab10.colors
         rmse_list = []
-        for i, idx in enumerate(valid_idx):
-            ax = axes[i]
-            if self.system_name == "Spring":
-                time = np.arange(T)
-                ax.plot(time, traj[:, 0, idx], label=label1, color='red')
-                ax.plot(time, real[:, 0, idx], label=label2, color='blue', linestyle='--')
-                ax.set_xlabel('Time')
-                ax.set_ylabel('x')
+        if sys_name == "Spring":
+            # 1D系统，所有粒子画在一张图上，x随时间变化
+            time = np.arange(T)
+            for i, idx in enumerate(valid_idx):
+                plt.plot(time, traj[:, 0, idx], label=f'{label1} Particle {idx+1}', color=colors[i % len(colors)], linestyle='-')
+                plt.plot(time, real[:, 0, idx], label=f'{label2} Particle {idx+1}', color=colors[i % len(colors)], linestyle='--')
                 fake_traj = traj[:, 0, idx]
                 real_traj = real[:, 0, idx]
-            else:
-                ax.plot(traj[:, 0, idx], traj[:, 1, idx], label=label1, color='red')
-                ax.plot(real[:, 0, idx], real[:, 1, idx], label=label2, color='blue', linestyle='--')
-                ax.set_xlabel('x')
-                ax.set_ylabel('y')
+                if T == T_real:
+                    rmse = self.compute_rmse(fake_traj, real_traj, eps=1e-8)
+                    rmse_list.append(rmse)
+            plt.xlabel('Time')
+            plt.ylabel('x')
+        else:
+            # 2D系统，所有粒子画在一张图上，xy轨迹
+            for i, idx in enumerate(valid_idx):
+                plt.plot(traj[:, 0, idx], traj[:, 1, idx], label=f'{label1} Particle {idx+1}', color=colors[i % len(colors)], linestyle='-')
+                plt.plot(real[:, 0, idx], real[:, 1, idx], label=f'{label2} Particle {idx+1}', color=colors[i % len(colors)], linestyle='--')
                 fake_traj = traj[:, :, idx]
                 real_traj = real[:, :, idx]
+                if T == T_real:
+                    rmse = self.compute_rmse(fake_traj, real_traj, eps=1e-8)
+                    rmse_list.append(rmse)
+            plt.xlabel('x')
+            plt.ylabel('y')
 
-            if T == T_real:
-                rmse = self.compute_rmse(fake_traj, real_traj, eps=1e-8)
-                rmse_list.append(rmse)
-                ax.set_title(f'Particle {idx} (RMSE={rmse:.4f})')
-            else:
-                ax.set_title(f'Particle {idx} (T mismatch)')
-
-            ax.grid(True)
-            ax.legend()
-
-        if T == T_real:
+        if T == T_real and rmse_list:
             mean_rmse = np.mean(rmse_list)
-            title = f"{self.system_name} (RMSE={mean_rmse:.4f})"
+            title = f"{sys_name} (RMSE={mean_rmse:.4f})"
         else:
-            title = f"{self.system_name} (T mismatch)"
-        plt.suptitle(title)
+            title = f"{sys_name} (T mismatch)"
+        plt.title(title)
+        plt.legend()
         plt.tight_layout()
         plt.savefig(save_path)
         plt.close()
 
         # Save trajectory data
-        save_data_path = os.path.splitext(save_path)[0] + '_data.npz'
-        np.savez(save_data_path, fake=traj, real=real, mask=mask)
+        if system_name is None:
+            save_data_path = os.path.splitext(save_path)[0] + '_data.npz'
+            np.savez(save_data_path, fake=traj, real=real, mask=mask, system_name=sys_name)
 
     def _compute_momentum(self, q_t, q_t1):
         mass = np.atleast_1d(self.system_args["mass"])
@@ -470,14 +470,12 @@ class HGNRealtimeDataset(Dataset):
         os.makedirs(folder, exist_ok=True)
         filename = f"{prefix}{epoch:0>6}"
         file_path = os.path.join(folder, f"{filename}.jpg")
-        # print(f"traj{trajectory[0]}\n")
 
         system = EnvFactory.get_environment(self.system_name, **self.system_args)
         q = system.extract_q(trajectory, mask, frame_idx=frame_idx)
         q1 = system.extract_q(trajectory, mask, frame_idx=frame_idx+1)
         p = self._compute_momentum(q,q1)
         
-        #求解器会失灵提前终止
         rollout = system.calculate_fixed_rollout(q, p, number_of_frames=self.num_frames, delta_time=self.delta)
 
         self.plot_2d_trajectory_comparison(trajectory, mask, rollout, file_path)
