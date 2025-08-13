@@ -466,6 +466,44 @@ class HGNRealtimeDataset(Dataset):
 
         return padded, mask, labels_and_props
     
+    def get_system_ids(self, label_and_props):
+        """
+        label_and_props: torch.Tensor (B, n_label+params)
+        返回 system_id: (B,) 整数ID
+        """
+        system_code = label_and_props[:, :3]
+        unique_codes = {tuple(code): idx for idx, code in enumerate(np.unique(system_code, axis=0))}
+        system_id = np.array([unique_codes[tuple(code)] for code in system_code])
+        return system_id
+    
+    def plot_latent_tsne(self, Z, label_and_props, folder, epoch, prefix):
+        """
+        Z: torch.Tensor (batch_size, n_frames, nz)
+        labels: torch.Tensor (batch_size,) or (batch_size, n_frames) 可选
+        """
+
+        from sklearn.manifold import TSNE
+        print(label_and_props.shape, Z.shape)
+        Z = np.squeeze(Z)
+        system_id = self.get_system_ids(label_and_props)
+        system_id_repeat = np.repeat(system_id, Z.shape[1])
+        Z_flat = Z.reshape(-1, Z.shape[-1])
+        tsne_z = TSNE(n_components=2, perplexity=30, random_state=42)
+        Z_embedded = tsne_z.fit_transform(Z_flat)
+        print(Z_embedded.shape,system_id_repeat.shape)
+
+        os.makedirs(folder, exist_ok=True)
+        filename = f"{prefix}{epoch:0>6}"
+        file_path = os.path.join(folder, f"{filename}.jpg")
+        plt.figure(figsize=(8, 8))
+        scatter = plt.scatter(Z_embedded[:, 0], Z_embedded[:, 1], c=system_id_repeat, cmap="tab10", alpha=0.3, label="Z")
+        plt.legend()
+        plt.title("t-SNE of Z")
+        plt.colorbar(scatter, label="System ID")
+        plt.savefig(file_path)
+        plt.close()
+
+
     def comparison(self, trajectory, mask, folder, epoch, prefix, frame_idx=0):
         os.makedirs(folder, exist_ok=True)
         filename = f"{prefix}{epoch:0>6}"
