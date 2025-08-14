@@ -405,8 +405,8 @@ class HGNRealtimeDataset(Dataset):
         mass = np.atleast_1d(self.system_args["mass"])
         p = mass[:, None] * (q_t1 - q_t) / self.delta
         return p.reshape(q_t.shape)
-    
-    def pad_traj(self, traj, n_max = 10):
+
+    def pad_traj(self, traj, n_max=3):
         n_particles = traj.shape[2]
         T = traj.shape[0]
         padded = torch.zeros((T, 2, n_max), dtype=torch.float32)
@@ -483,14 +483,13 @@ class HGNRealtimeDataset(Dataset):
         """
 
         from sklearn.manifold import TSNE
-        print(label_and_props.shape, Z.shape)
+        from sklearn.decomposition import PCA
         Z = np.squeeze(Z)
         system_id = self.get_system_ids(label_and_props)
         system_id_repeat = np.repeat(system_id, Z.shape[1])
         Z_flat = Z.reshape(-1, Z.shape[-1])
         tsne_z = TSNE(n_components=2, perplexity=30, random_state=42)
         Z_embedded = tsne_z.fit_transform(Z_flat)
-        print(Z_embedded.shape,system_id_repeat.shape)
 
         os.makedirs(folder, exist_ok=True)
         filename = f"{prefix}{epoch:0>6}"

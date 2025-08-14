@@ -176,8 +176,9 @@ class Experiment:
         self.Dv = TrajectoryDiscriminator(
             self.ndim_label + self.ndim_physics,
             hidden_dim=self.ndim_discriminator_hiddenlayer,
-            bidirectional = True
-        ).to(self.device)        
+            bidirectional=True,
+            max_n=self.max_n,
+        ).to(self.device)
         # self.Gi = Generator_I(
         #     self.ndim_channel,
         #     self.ndim_generator_filter,

@@ -428,10 +428,10 @@ class FiLMDecoder(nn.Module):
 
 class TrajectoryDiscriminator(nn.Module):
     
-    def __init__(self, cond_dim, hidden_dim=128, num_layers=2, pos_dim = 2, bidirectional=True):
+    def __init__(self, cond_dim, hidden_dim=128, num_layers=2, pos_dim = 2, bidirectional=True, max_n = 3):
         super().__init__()
         self.cond_dim = cond_dim
-        self.input_dim = pos_dim*10 + cond_dim  # 每帧输入 = 轨迹 + 条件向量
+        self.input_dim = pos_dim * max_n + cond_dim  # 每帧输入 = 轨迹 + 条件向量
 
         self.rnn = nn.GRU(
             input_size=self.input_dim,
