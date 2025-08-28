@@ -483,24 +483,28 @@ class HGNRealtimeDataset(Dataset):
         """
 
         from sklearn.manifold import TSNE
-        from sklearn.decomposition import PCA
-        Z = np.squeeze(Z)
-        system_id = self.get_system_ids(label_and_props)
-        system_id_repeat = np.repeat(system_id, Z.shape[1])
+        Z = np.squeeze(Z)[0]
+        # system_id = self.get_system_ids(label_and_props)
+        # system_id_repeat = np.repeat(system_id, Z.shape[1])
         Z_flat = Z.reshape(-1, Z.shape[-1])
-        tsne_z = TSNE(n_components=2, perplexity=30, random_state=42)
-        Z_embedded = tsne_z.fit_transform(Z_flat)
-
+        
+        perplexity_values = [3, 5, 7, 10, 13, 15, 20]
+        
         os.makedirs(folder, exist_ok=True)
-        filename = f"{prefix}{epoch:0>6}"
-        file_path = os.path.join(folder, f"{filename}.jpg")
-        plt.figure(figsize=(8, 8))
-        scatter = plt.scatter(Z_embedded[:, 0], Z_embedded[:, 1], c=system_id_repeat, cmap="tab10", alpha=0.3, label="Z")
-        plt.legend()
-        plt.title("t-SNE of Z")
-        plt.colorbar(scatter, label="System ID")
-        plt.savefig(file_path)
-        plt.close()
+        
+        for perplexity in perplexity_values:
+            tsne_z = TSNE(n_components=2, perplexity=perplexity, random_state=42)
+            Z_embedded = tsne_z.fit_transform(Z_flat)
+
+            filename = f"{prefix}{epoch:0>6}_perplexity_{perplexity}"
+            file_path = os.path.join(folder, f"{filename}.jpg")
+            plt.figure(figsize=(8, 8))
+            scatter = plt.scatter(Z_embedded[:, 0], Z_embedded[:, 1], alpha=0.6, s=30)
+            plt.title(f"t-SNE of Z (perplexity={perplexity})")
+            plt.xlabel("t-SNE dimension 1")
+            plt.ylabel("t-SNE dimension 2")
+            plt.savefig(file_path)
+            plt.close()
 
 
     def comparison(self, trajectory, mask, folder, epoch, prefix, frame_idx=0):
