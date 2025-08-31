@@ -277,10 +277,10 @@ def main(*args):
     if args.override_output_folder:
         experiment.config.paths.output = os.path.dirname(args.config_path)
     experiment.eval()
+    batch_size = args.latent_batch_size
 
     # Check if we need to handle multiple systems
     is_multi_system = args.system_name == "variable"
-    # print(args.system_name, is_multi_system)
     all_system_names = ["mass_spring", "pendulum", "double_pendulum", "two_body", "three_body"]
 
     if not is_multi_system:
@@ -311,9 +311,9 @@ def main(*args):
             )
             sys_props = torch.tensor(sys_env.physical_properties(vec_length=experiment.ndim_physics))
             
-            samples_per_system = experiment.batch_size // 5
+            samples_per_system = batch_size // 5
             if sys_name == all_system_names[-1]: 
-                samples_per_system = experiment.batch_size - 4 * samples_per_system
+                samples_per_system = batch_size - 4 * samples_per_system
             
             sys_props_batch = sys_props.unsqueeze(0).repeat(samples_per_system, 1)
             multi_props.append(sys_props_batch)
@@ -338,9 +338,9 @@ def main(*args):
             for sys_name in all_system_names:
                 sys_index = all_systems_hgn.index(sys_name)
                 sys_embedding = experiment.system_embedding(torch.tensor([sys_index])).squeeze()
-                samples_per_system = experiment.batch_size // 5
+                samples_per_system = batch_size // 5
                 if sys_name == all_system_names[-1]:  # Last system gets remaining samples
-                    samples_per_system = experiment.batch_size - 4 * samples_per_system
+                    samples_per_system = batch_size - 4 * samples_per_system
 
                 sys_label_batch = sys_embedding.unsqueeze(0).repeat(samples_per_system, 1)
                 multi_labels.append(sys_label_batch)
@@ -348,7 +348,6 @@ def main(*args):
             # Concatenate labels and props
             multi_labels = torch.cat(multi_labels, dim=0)
             label_and_props = torch.cat([multi_labels, multi_props], dim=1).to(experiment.device)
-            # print("label_and_props", label_and_props)
 
         else:
             label_and_props = torch.cat(
@@ -359,30 +358,30 @@ def main(*args):
             )
             label_and_props = (
                 label_and_props.unsqueeze(0)
-                .repeat(experiment.batch_size, 1)
+                .repeat(batch_size, 1)
                 .to(experiment.device)
             )  # (batch_size, ndim_label + ndim_physics)
 
-        Z, _, _ = experiment.get_latent_sample(
-            batch_size=config.experiment.batch_size,
-            n_frames=config.video.generator_frames,
-            label_and_props=label_and_props,
-        )
-        Z_motion = Z[0, :, : experiment.ndim_epsilon, :, :].squeeze()
-        hnn_input = torch.concat(  # Note order: label_props, then Z_motion
-            (
-                label_and_props[0]
-                .unsqueeze(0)
-                .repeat(config.video.generator_frames, 1),
-                Z_motion,
-            ),
-            axis=1,
-        )
-        energy = experiment.rnn.hnn(hnn_input)
-        std_energy = float(torch.std(energy.squeeze()))
+        # Z, _, _ = experiment.get_latent_sample(
+        #     batch_size=config.experiment.batch_size,
+        #     n_frames=config.video.generator_frames,
+        #     label_and_props=label_and_props,
+        # )
+        # Z_motion = Z[0, :, : experiment.ndim_epsilon, :, :].squeeze()
+        # hnn_input = torch.concat(  # Note order: label_props, then Z_motion
+        #     (
+        #         label_and_props[0]
+        #         .unsqueeze(0)
+        #         .repeat(config.video.generator_frames, 1),
+        #         Z_motion,
+        #     ),
+        #     axis=1,
+        # )
+        # energy = experiment.rnn.hnn(hnn_input)
+        # std_energy = float(torch.std(energy.squeeze()))
 
-        with open(os.path.join(output_folder, "energy.txt"), "a") as f:
-            f.write(f"epoch={epoch}, std_energy={std_energy}\n")
+        # with open(os.path.join(output_folder, "energy.txt"), "a") as f:
+        #     f.write(f"epoch={epoch}, std_energy={std_energy}\n")
 
         # logger.info("  Generating Videos Image")
         # qualitative_results_img(
@@ -403,7 +402,7 @@ def main(*args):
         # plot the TSNE embedding of the q part of the latent space
         qualitative_results_latent(
             experiment=experiment,
-            label_and_props=label_and_props[0].unsqueeze(0).repeat(1024, 1),
+            label_and_props=label_and_props,
             png_paths=[
                 f"{output_folder}/config_{epoch:06d}_tsne.png",
                 f"{output_folder}/config_{epoch:06d}_pca.png",
