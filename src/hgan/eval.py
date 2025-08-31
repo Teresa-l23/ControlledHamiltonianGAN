@@ -280,7 +280,7 @@ def main(*args):
 
     # Check if we need to handle multiple systems
     is_multi_system = args.system_name == "variable"
-    print(args.system_name, is_multi_system)
+    # print(args.system_name, is_multi_system)
     all_system_names = ["mass_spring", "pendulum", "double_pendulum", "two_body", "three_body"]
 
     if not is_multi_system:
@@ -348,7 +348,7 @@ def main(*args):
             # Concatenate labels and props
             multi_labels = torch.cat(multi_labels, dim=0)
             label_and_props = torch.cat([multi_labels, multi_props], dim=1).to(experiment.device)
-            print("label_and_props", label_and_props)
+            # print("label_and_props", label_and_props)
 
         else:
             label_and_props = torch.cat(
