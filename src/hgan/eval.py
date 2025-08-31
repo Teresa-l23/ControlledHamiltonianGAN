@@ -11,7 +11,7 @@ from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 from hgan.configuration import load_config
 from hgan.experiment import Experiment
-from hgan.hgn_datasets import all_systems_hgn, variable_physics_hgn
+from hgan.hgn_datasets import all_systems_hgn, variable_physics_hgn, constant_physics_hgn
 from hgan.hgn.environments.environment_factory import EnvFactory
 
 
@@ -155,6 +155,7 @@ def qualitative_results_latent(
     title="",
     n_frames=30,
     projections=("tsne", "pca"),
+    multi_system=False,
 ):
     batch_size = label_and_props.shape[0]
     Z, _, eps_motion = experiment.get_latent_sample(
@@ -178,6 +179,29 @@ def qualitative_results_latent(
 
     size_train = X_train.shape[0]
     X = np.vstack((X_train, X_test))
+    
+    # Prepare colors for different systems if multi_system is True
+    colors = None
+    system_labels = None
+    if multi_system:
+        # Split batch into 5 equal parts for 5 different systems
+        samples_per_system = batch_size // 5
+        system_labels = []
+        
+        # Assign system labels based on batch position
+        for sys_idx in range(5):
+            start_idx = sys_idx * samples_per_system
+            if sys_idx == 4:  # Last system gets remaining samples
+                end_idx = batch_size
+            else:
+                end_idx = (sys_idx + 1) * samples_per_system
+            
+            # Add labels for this system
+            system_labels.extend([sys_idx] * (end_idx - start_idx))
+        
+        system_labels = np.array(system_labels)
+        system_colors = ['red', 'blue', 'green', 'orange', 'purple']
+        colors = [system_colors[label] for label in system_labels]
 
     for projection, png_path in zip(projections, png_paths):
         if projection == "tsne":
@@ -195,8 +219,21 @@ def qualitative_results_latent(
 
                 projected_train = projected[:size_train]
                 projected_test = projected[size_train:]
-                axs[i].plot(projected_train[:, 0], projected_train[:, 1], ".")
-                axs[i].plot(projected_test[:, 0], projected_test[:, 1], "x")
+                
+                if multi_system and colors is not None:
+                    # Plot different systems with different colors
+                    for sys_idx in range(5):  # 5 systems
+                        mask = np.array(system_labels) == sys_idx
+                        if np.any(mask):
+                            system_name = ["mass_spring", "pendulum", "double_pendulum", "two_body", "three_body"][sys_idx]
+                            axs[i].scatter(projected_train[mask, 0], projected_train[mask, 1], 
+                                         c=system_colors[sys_idx], marker='.', label=system_name, alpha=0.7)
+                    axs[i].plot(projected_test[:, 0], projected_test[:, 1], "x", label="trajectory")
+                    if i == 0:  # Only add legend to first subplot
+                        axs[i].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                else:
+                    axs[i].plot(projected_train[:, 0], projected_train[:, 1], ".")
+                    axs[i].plot(projected_test[:, 0], projected_test[:, 1], "x")
                 axs[i].set_title(f"Perplexity {p}")
                 axs[i].axis("off")
         else:
@@ -205,8 +242,20 @@ def qualitative_results_latent(
             projected_test = projection.transform(X_test)
             fig, ax = plt.subplots(figsize=(20, 6))
             fig.suptitle(title)
-            ax.plot(projected_train[:, 0], projected_train[:, 1], ".")
-            ax.plot(projected_test[:, 0], projected_test[:, 1], "x")
+            
+            if multi_system and colors is not None:
+                # Plot different systems with different colors
+                for sys_idx in range(5):  # 5 systems
+                    mask = np.array(system_labels) == sys_idx
+                    if np.any(mask):
+                        system_name = ["mass_spring", "pendulum", "double_pendulum", "two_body", "three_body"][sys_idx]
+                        ax.scatter(projected_train[mask, 0], projected_train[mask, 1], 
+                                 c=system_colors[sys_idx], marker='.', label=system_name, alpha=0.7)
+                ax.plot(projected_test[:, 0], projected_test[:, 1], "kx", markersize=8, label="trajectory")
+                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            else:
+                ax.plot(projected_train[:, 0], projected_train[:, 1], ".")
+                ax.plot(projected_test[:, 0], projected_test[:, 1], "x")
             ax.axis("off")
 
         os.makedirs(os.path.dirname(png_path), exist_ok=True)
@@ -229,41 +278,90 @@ def main(*args):
         experiment.config.paths.output = os.path.dirname(args.config_path)
     experiment.eval()
 
-    system_index = all_systems_hgn.index(args.system_name)
-    system_args = variable_physics_hgn[args.system_name]
-    system_args = {
-        k: (v() if not isinstance(v, list) else [_v() for _v in v])
-        for k, v in system_args.items()
-    }
-    system = EnvFactory.get_environment(
-        experiment.dataloader.dataset.system_name_mapping[args.system_name],
-        **system_args,
-    )
-    props = torch.tensor(system.physical_properties(vec_length=experiment.ndim_physics))
+    # Check if we need to handle multiple systems
+    is_multi_system = args.system_name == "variable"
+    print(args.system_name, is_multi_system)
+    all_system_names = ["mass_spring", "pendulum", "double_pendulum", "two_body", "three_body"]
 
-    colors = torch.tensor([1, 0, 0, 0, 1, 0, 0, 0, 1])  # rgbrgbrgb
-    colors = (
-        colors.unsqueeze(0).repeat(experiment.batch_size, 1).to(experiment.device)
-    )  # (batch_size, ndim_color)
+    if not is_multi_system:
+        # Single system handling as before
+        system_index = all_systems_hgn.index(args.system_name)
+        system_args = constant_physics_hgn[args.system_name]
+        system_args = {
+            k: (v() if not isinstance(v, list) else [_v() for _v in v])
+            for k, v in system_args.items()
+        }
+        system = EnvFactory.get_environment(
+            experiment.dataloader.dataset.system_name_mapping[args.system_name],
+            **system_args,
+        )
+        props = torch.tensor(system.physical_properties(vec_length=experiment.ndim_physics))
+    else:
+        # Pre-compute all system properties for multi-system mode
+        multi_props = []
+        for sys_name in all_system_names:
+            sys_args = constant_physics_hgn[sys_name]
+            sys_args = {
+                k: (v() if not isinstance(v, list) else [_v() for _v in v])
+                for k, v in sys_args.items()
+            }
+            sys_env = EnvFactory.get_environment(
+                experiment.dataloader.dataset.system_name_mapping[sys_name],
+                **sys_args,
+            )
+            sys_props = torch.tensor(sys_env.physical_properties(vec_length=experiment.ndim_physics))
+            
+            samples_per_system = experiment.batch_size // 5
+            if sys_name == all_system_names[-1]: 
+                samples_per_system = experiment.batch_size - 4 * samples_per_system
+            
+            sys_props_batch = sys_props.unsqueeze(0).repeat(samples_per_system, 1)
+            multi_props.append(sys_props_batch)
+        
+        # Concatenate all system properties
+        multi_props = torch.cat(multi_props, dim=0)
+        
+    # colors = torch.tensor([1, 0, 0, 0, 1, 0, 0, 0, 1])  # rgbrgbrgb
+    # colors = (
+    #     colors.unsqueeze(0).repeat(experiment.batch_size, 1).to(experiment.device)
+    # )  # (batch_size, ndim_color)
 
     saved_epochs = experiment.saved_epochs()
     for epoch in saved_epochs[:: args.every_nth]:
 
         logger.info(f"Processing epoch {epoch}")
         experiment.load_epoch(epoch, device=device)
+        if is_multi_system:
+            # Simple approach: create embeddings in order for all 5 systems
+            multi_labels = []
+            
+            for sys_name in all_system_names:
+                sys_index = all_systems_hgn.index(sys_name)
+                sys_embedding = experiment.system_embedding(torch.tensor([sys_index])).squeeze()
+                samples_per_system = experiment.batch_size // 5
+                if sys_name == all_system_names[-1]:  # Last system gets remaining samples
+                    samples_per_system = experiment.batch_size - 4 * samples_per_system
 
-        label_and_props = torch.cat(
-            (
-                experiment.system_embedding(torch.tensor([system_index])).squeeze(),
-                props,
+                sys_label_batch = sys_embedding.unsqueeze(0).repeat(samples_per_system, 1)
+                multi_labels.append(sys_label_batch)
+
+            # Concatenate labels and props
+            multi_labels = torch.cat(multi_labels, dim=0)
+            label_and_props = torch.cat([multi_labels, multi_props], dim=1).to(experiment.device)
+            print("label_and_props", label_and_props)
+
+        else:
+            label_and_props = torch.cat(
+                (
+                    experiment.system_embedding(torch.tensor([system_index])).squeeze(),
+                    props,
+                )
             )
-        )
-
-        label_and_props = (
-            label_and_props.unsqueeze(0)
-            .repeat(experiment.batch_size, 1)
-            .to(experiment.device)
-        )  # (batch_size, ndim_label + ndim_physics)
+            label_and_props = (
+                label_and_props.unsqueeze(0)
+                .repeat(experiment.batch_size, 1)
+                .to(experiment.device)
+            )  # (batch_size, ndim_label + ndim_physics)
 
         Z, _, _ = experiment.get_latent_sample(
             batch_size=config.experiment.batch_size,
@@ -286,19 +384,19 @@ def main(*args):
         with open(os.path.join(output_folder, "energy.txt"), "a") as f:
             f.write(f"epoch={epoch}, std_energy={std_energy}\n")
 
-        logger.info("  Generating Videos Image")
-        qualitative_results_img(
-            experiment,
-            f"{output_folder}/videos_{epoch:06d}.png",
-            timeslots=args.generated_videos_timeslots,
-            samples=args.generated_videos_samples,
-            title=f"Epoch {epoch}",
-            epoch=epoch,
-            save_video=True,
-            fake=True,
-            label_and_props=label_and_props,
-            colors=colors,
-        )
+        # logger.info("  Generating Videos Image")
+        # qualitative_results_img(
+        #     experiment,
+        #     f"{output_folder}/videos_{epoch:06d}.png",
+        #     timeslots=args.generated_videos_timeslots,
+        #     samples=args.generated_videos_samples,
+        #     title=f"Epoch {epoch}",
+        #     epoch=epoch,
+        #     save_video=True,
+        #     fake=True,
+        #     label_and_props=label_and_props,
+        #     colors=colors,
+        # )
 
         logger.info("  Generating Latent Features Image")
         # For the first label_and_props sampled 1024 times from the latent space,
@@ -311,6 +409,7 @@ def main(*args):
                 f"{output_folder}/config_{epoch:06d}_pca.png",
             ],
             title=f"Epoch {epoch}",
+            multi_system=is_multi_system,
         )
 
         if args.calculate_fvd:

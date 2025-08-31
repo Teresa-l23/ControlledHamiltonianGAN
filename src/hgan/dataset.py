@@ -476,35 +476,6 @@ class HGNRealtimeDataset(Dataset):
         system_id = np.array([unique_codes[tuple(code)] for code in system_code])
         return system_id
     
-    def plot_latent_tsne(self, Z, folder, epoch, prefix):
-        """
-        Z: torch.Tensor (batch_size, n_frames, nz)
-        labels: torch.Tensor (batch_size,) or (batch_size, n_frames) 可选
-        """
-
-        from sklearn.manifold import TSNE
-        Z = np.squeeze(Z)[-1]
-        # system_id = self.get_system_ids(label_and_props)
-        # system_id_repeat = np.repeat(system_id, Z.shape[1])
-        Z_flat = Z.reshape(-1, Z.shape[-1])
-        
-        perplexity_values = [3, 5, 7, 10, 13, 15, 20]
-        
-        os.makedirs(folder, exist_ok=True)
-        
-        for perplexity in perplexity_values:
-            tsne_z = TSNE(n_components=2, perplexity=perplexity, random_state=42)
-            Z_embedded = tsne_z.fit_transform(Z_flat)
-
-            filename = f"{prefix}{epoch:0>6}_perplexity_{perplexity}"
-            file_path = os.path.join(folder, f"{filename}.jpg")
-            plt.figure(figsize=(8, 8))
-            scatter = plt.scatter(Z_embedded[:, 0], Z_embedded[:, 1], alpha=0.6, s=30)
-            plt.title(f"t-SNE of {self.system_name} (perplexity={perplexity})")
-            plt.xlabel("t-SNE dimension 1")
-            plt.ylabel("t-SNE dimension 2")
-            plt.savefig(file_path)
-            plt.close()
 
 
     def comparison(self, trajectory, mask, folder, epoch, prefix, frame_idx=0):

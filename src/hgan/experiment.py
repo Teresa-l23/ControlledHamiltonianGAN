@@ -684,15 +684,6 @@ class Experiment:
                     prefix="comp_"
                 )
             
-            if epoch % self.make_tsne_every == 0 or last_epoch:
-                self.dataset.plot_latent_tsne(
-                    fake_data["latent"].detach().cpu().numpy(),
-                    # real_data["label_and_props"].detach().cpu().numpy(),
-                    self.config.paths.output,
-                    epoch = epoch,
-                    prefix = "tsne_",
-                )
-
             if epoch % self.save_model_every == 0 or last_epoch:
                 self.save_epoch(epoch)
 
