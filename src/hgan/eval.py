@@ -88,6 +88,13 @@ def get_parser():
         default=False,
         help="Whether to assume that the output folder is the same as the config path folder.",
     )
+    parser.add_argument(
+        "--perplexity",
+        type=int,
+        nargs='+',
+        default=[2, 5, 30, 50, 100],
+        help="Perplexity values for t-SNE visualization (default: 2 5 30 50 100)",
+    )
     return parser
 
 
@@ -150,7 +157,7 @@ def qualitative_results_img(
 def qualitative_results_latent(
     experiment,
     label_and_props,
-    png_paths,
+    png_paths_prefix,
     perplexity_values=(2, 5, 30, 50, 100),
     title="",
     n_frames=30,
@@ -203,17 +210,16 @@ def qualitative_results_latent(
         system_colors = ['red', 'blue', 'green', 'orange', 'purple']
         colors = [system_colors[label] for label in system_labels]
 
-    for projection, png_path in zip(projections, png_paths):
-        if projection == "tsne":
-            fig, axs = plt.subplots(
-                ncols=len(perplexity_values),
-                nrows=1,
-                figsize=(20, 6),
-                layout="constrained",
-            )
-            fig.suptitle(title)
+    for projection_name in projections:
+        if projection_name == "tsne":
+            # Generate separate plots for each perplexity value
+            for p in perplexity_values:
+                fig, ax = plt.subplots(
+                    figsize=(4, 6),  # Original figsize (20, 6) divided by 5
+                    layout="constrained",
+                    dpi=300,  # High resolution for clarity
+                )
 
-            for i, p in enumerate(perplexity_values):
                 projection = TSNE(n_components=2, perplexity=p, init="random")
                 projected = projection.fit_transform(X)
 
@@ -226,22 +232,25 @@ def qualitative_results_latent(
                         mask = np.array(system_labels) == sys_idx
                         if np.any(mask):
                             system_name = ["mass_spring", "pendulum", "double_pendulum", "two_body", "three_body"][sys_idx]
-                            axs[i].scatter(projected_train[mask, 0], projected_train[mask, 1], 
-                                         c=system_colors[sys_idx], marker='.', label=system_name, alpha=0.7)
-                    axs[i].plot(projected_test[:, 0], projected_test[:, 1], "x", label="trajectory")
-                    if i == 0:  # Only add legend to first subplot
-                        axs[i].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                            ax.scatter(projected_train[mask, 0], projected_train[mask, 1], 
+                                     c=system_colors[sys_idx], marker='.', label=system_name, alpha=0.7)
+                    ax.plot(projected_test[:, 0], projected_test[:, 1], "x", label="trajectory")
+                    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
                 else:
-                    axs[i].plot(projected_train[:, 0], projected_train[:, 1], ".")
-                    axs[i].plot(projected_test[:, 0], projected_test[:, 1], "x")
-                axs[i].set_title(f"Perplexity {p}")
-                axs[i].axis("off")
-        else:
+                    ax.plot(projected_train[:, 0], projected_train[:, 1], ".")
+                    # ax.plot(projected_test[:, 0], projected_test[:, 1], "x")
+                ax.axis("off")
+                
+                # Save each perplexity plot separately with high quality
+                png_path = f"{png_paths_prefix}_tsne_perplexity_{p}.png"
+                os.makedirs(os.path.dirname(png_path), exist_ok=True)
+                plt.savefig(png_path, dpi=300, bbox_inches='tight', facecolor='white')
+                plt.close(fig=fig)
+        else:  # PCA
             projection = PCA(n_components=2)
             projected_train = projection.fit_transform(X_train)
             projected_test = projection.transform(X_test)
-            fig, ax = plt.subplots(figsize=(20, 6))
-            fig.suptitle(title)
+            fig, ax = plt.subplots(figsize=(4, 6), dpi=300)  # High resolution for clarity
             
             if multi_system and colors is not None:
                 # Plot different systems with different colors
@@ -257,10 +266,12 @@ def qualitative_results_latent(
                 ax.plot(projected_train[:, 0], projected_train[:, 1], ".")
                 ax.plot(projected_test[:, 0], projected_test[:, 1], "x")
             ax.axis("off")
-
-        os.makedirs(os.path.dirname(png_path), exist_ok=True)
-        plt.savefig(png_path)
-        plt.close(fig=fig)
+            
+            # Save PCA plot with high quality
+            png_path = f"{png_paths_prefix}_pca.png"
+            os.makedirs(os.path.dirname(png_path), exist_ok=True)
+            plt.savefig(png_path, dpi=300, bbox_inches='tight', facecolor='white')
+            plt.close(fig=fig)
 
 
 def main(*args):
@@ -403,10 +414,8 @@ def main(*args):
         qualitative_results_latent(
             experiment=experiment,
             label_and_props=label_and_props,
-            png_paths=[
-                f"{output_folder}/config_{epoch:06d}_tsne.png",
-                f"{output_folder}/config_{epoch:06d}_pca.png",
-            ],
+            png_paths_prefix=f"{output_folder}/config_{epoch:06d}",
+            perplexity_values=args.perplexity,
             title=f"Epoch {epoch}",
             multi_system=is_multi_system,
         )
