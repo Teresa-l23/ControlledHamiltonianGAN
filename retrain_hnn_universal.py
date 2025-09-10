@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import argparse
 import time
+import logging
 
 # 添加路径
 PROJECT_PATH = '/home/jiayinliu/Desktop/ControlledHamiltonianGAN_0'
@@ -180,6 +181,10 @@ class UniversalHNNRetrainer:
     def train_hnn(self, total_steps=1000, learning_rate=1e-3, hidden_dim=200):
         """训练HNN模型"""
         
+        # 简单logger配置
+        logging.basicConfig(level=logging.INFO, format='%(message)s')
+        logger = logging.getLogger(__name__)
+        
         # GPU设备检测和设置
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"  使用设备: {device}")
@@ -234,14 +239,13 @@ class UniversalHNNRetrainer:
                 remaining_steps = total_steps - step
                 estimated_remaining_time = (step_elapsed / 100) * remaining_steps if step > 0 else 0
                 
-                print(f"  Step {step:4d}, train_loss: {loss.item():.6e}, test_loss: {test_loss.item():.6e}")
-                print(f"    用时: {step_elapsed:.2f}s (100步), 总时间: {total_elapsed:.1f}s, 预计剩余: {estimated_remaining_time:.1f}s")
+                logger.info(f"Step {step:4d} | train_loss: {loss.item():.6e} | test_loss: {test_loss.item():.6e} | time: {step_elapsed:.1f}s | total: {total_elapsed:.1f}s | eta: {estimated_remaining_time:.1f}s")
                 
                 step_start_time = current_time
         
         # 训练完成时间统计
         total_training_time = time.time() - start_time
-        print(f"\n训练完成！总用时: {total_training_time:.1f}s ({total_training_time/60:.1f}分钟)")
+        logger.info(f"训练完成 | 总用时: {total_training_time:.1f}s ({total_training_time/60:.1f}min)")
         
         return hnn_model, stats
 
