@@ -16,7 +16,7 @@ from hgan.models import GRU, HNNSimple, HNNPhaseSpace, HNNMass
 from hgan.dataset import RealtimeDataset, HGNRealtimeDataset, ToyPhysicsDatasetNPZ
 from hgan.utils import setup_reproducibility, timeSince
 from hgan.fvd import compute_fvd
-from hgan.models import Discriminator_I, Discriminator_V, Generator_I, TrajectoryGenerator, FiLMDecoder, TrajectoryDiscriminator
+from hgan.models import Discriminator_I, Discriminator_V, Generator_I, TrajectoryGenerator, TrajectoryDiscriminator
 from hgan.updates import update_models
 from hgan.sgan_discriminator import TrajectoryDiscriminator as SganDiscriminator
 
@@ -493,7 +493,6 @@ class Experiment:
         else:
             real_videos = next_item
             mask = next_item[1]
-
         real_videos = real_videos.to(
             device
         )  # (batch_size, ndim_channels, n_frames, img_size, img_size)
