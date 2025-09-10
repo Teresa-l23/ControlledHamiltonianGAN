@@ -10,6 +10,7 @@ import sys
 import numpy as np
 import torch
 import argparse
+import time
 
 # 添加路径
 PROJECT_PATH = '/home/jiayinliu/Desktop/ControlledHamiltonianGAN_0'
@@ -147,7 +148,7 @@ class UniversalHNNRetrainer:
         
         return coords, dydt, t_eval
     
-    def get_dataset(self, seed=0, samples=50, test_split=0.5):
+    def get_dataset(self, seed=0, samples=160, test_split=0.8):
         """生成训练数据集"""
         data = {'meta': {
             'system': self.hgn_system_name,
@@ -160,68 +161,66 @@ class UniversalHNNRetrainer:
         np.random.seed(seed)  # 固定随机种子以确保可重复性
         xs, dxs = [], []
         
-        print(f"生成 {self.hgn_system_name} 系统训练数据...")
-        print(f"  样本数: {samples}")
-        
-        for s in range(samples):
-            if s % 10 == 0:
-                print(f"  生成样本 {s}/{samples}")
-            
+        for s in range(samples):            
             coords, dydt, t = self.get_trajectory()
-            xs.append(coords.T)  # shape: (time_steps, system_dim)
+            xs.append(coords.T)
             dxs.append(dydt.T)
         
         data['x'] = np.concatenate(xs)
         data['dx'] = np.concatenate(dxs)
         
-        # 训练/测试分割
         split_ix = int(len(data['x']) * test_split)
         split_data = {}
         for k in ['x', 'dx']:
             split_data[k] = data[k][:split_ix]
             split_data['test_' + k] = data[k][split_ix:]
         
-        print(f"  训练样本: {len(split_data['x'])}")
-        print(f"  测试样本: {len(split_data['test_x'])}")
-        
         return split_data
     
     def train_hnn(self, total_steps=1000, learning_rate=1e-3, hidden_dim=200):
         """训练HNN模型"""
-        print(f"\\n开始训练 {self.hgn_system_name} 系统的HNN模型...")
         
-        # 生成数据
-        data = self.get_dataset()
-        
-        # 转换为torch张量
-        x = torch.tensor(data['x'], requires_grad=True, dtype=torch.float32)
-        test_x = torch.tensor(data['test_x'], requires_grad=True, dtype=torch.float32)
-        dxdt = torch.tensor(data['dx'], dtype=torch.float32)
-        test_dxdt = torch.tensor(data['test_dx'], dtype=torch.float32)
-        
-        print(f"  训练数据shape: {x.shape}")
-        print(f"  测试数据shape: {test_x.shape}")
-        
-        # 初始化模型
+        # GPU设备检测和设置
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"  使用设备: {device}")
+        if torch.cuda.is_available():
+            print(f"  GPU名称: {torch.cuda.get_device_name(0)}")
+            print(f"  GPU内存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+                
         output_dim = self.system_dim if False else 2  # baseline=False，所以输出维度固定为2
         nn_model = MLP(self.system_dim, hidden_dim, output_dim, 'tanh')
         hnn_model = HNN(self.system_dim, nn_model, field_type='solenoidal', baseline=False)
+        
+        # 模型移动到GPU
+        hnn_model = hnn_model.to(device)
+        
+        # 确保HNN模型的permutation tensor也在正确的设备上
+        if hasattr(hnn_model, 'M') and hnn_model.M is not None:
+            hnn_model.M = hnn_model.M.to(device)
+        
         optim = torch.optim.Adam(hnn_model.parameters(), learning_rate, weight_decay=1e-4)
         
-        print(f"  模型参数: input_dim={self.system_dim}, hidden_dim={hidden_dim}")
-        
-        # 训练循环
         stats = {'train_loss': [], 'test_loss': []}
         
+        # 时间统计
+        start_time = time.time()
+        step_start_time = start_time
+        
         for step in range(total_steps + 1):
-            # 训练步骤
+            data = self.get_dataset()
+
+            # 数据移动到GPU
+            x = torch.tensor(data['x'], requires_grad=True, dtype=torch.float32).to(device)
+            test_x = torch.tensor(data['test_x'], requires_grad=True, dtype=torch.float32).to(device)
+            dxdt = torch.tensor(data['dx'], dtype=torch.float32).to(device)
+            test_dxdt = torch.tensor(data['test_dx'], dtype=torch.float32).to(device)
+
             dxdt_hat = hnn_model.time_derivative(x)
             loss = L2_loss(dxdt, dxdt_hat)
             loss.backward()
             optim.step()
             optim.zero_grad()
             
-            # 测试
             test_dxdt_hat = hnn_model.time_derivative(test_x)
             test_loss = L2_loss(test_dxdt, test_dxdt_hat)
             
@@ -229,17 +228,20 @@ class UniversalHNNRetrainer:
             stats['test_loss'].append(test_loss.item())
             
             if step % 100 == 0:
+                current_time = time.time()
+                step_elapsed = current_time - step_start_time
+                total_elapsed = current_time - start_time
+                remaining_steps = total_steps - step
+                estimated_remaining_time = (step_elapsed / 100) * remaining_steps if step > 0 else 0
+                
                 print(f"  Step {step:4d}, train_loss: {loss.item():.6e}, test_loss: {test_loss.item():.6e}")
+                print(f"    用时: {step_elapsed:.2f}s (100步), 总时间: {total_elapsed:.1f}s, 预计剩余: {estimated_remaining_time:.1f}s")
+                
+                step_start_time = current_time
         
-        # 最终评估
-        train_dxdt_hat = hnn_model.time_derivative(x)
-        train_dist = (dxdt - train_dxdt_hat) ** 2
-        test_dxdt_hat = hnn_model.time_derivative(test_x)
-        test_dist = (test_dxdt - test_dxdt_hat) ** 2
-        
-        print(f'\\n训练完成!')
-        print(f'Final train loss: {train_dist.mean().item():.4e} +/- {train_dist.std().item()/np.sqrt(train_dist.shape[0]):.4e}')
-        print(f'Final test loss: {test_dist.mean().item():.4e} +/- {test_dist.std().item()/np.sqrt(test_dist.shape[0]):.4e}')
+        # 训练完成时间统计
+        total_training_time = time.time() - start_time
+        print(f"\n训练完成！总用时: {total_training_time:.1f}s ({total_training_time/60:.1f}分钟)")
         
         return hnn_model, stats
 
@@ -251,7 +253,7 @@ def main():
                        choices=['mass_spring', 'pendulum', 'double_pendulum', 'two_body', 'three_body'],
                        help='HGN物理系统类型')
     parser.add_argument('--dt', type=float, default=0.05, help='时间步长')
-    parser.add_argument('--total_steps', type=int, default=1000, help='训练步数')
+    parser.add_argument('--total_steps', type=int, default=50000, help='训练步数')
     parser.add_argument('--learning_rate', type=float, default=1e-3, help='学习率')
     parser.add_argument('--hidden_dim', type=int, default=200, help='隐藏层维度')
     
