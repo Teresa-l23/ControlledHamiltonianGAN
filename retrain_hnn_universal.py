@@ -181,7 +181,7 @@ class UniversalHNNRetrainer:
     def train_hnn(self, total_steps=1000, learning_rate=1e-3, hidden_dim=200):
         """训练HNN模型"""
         
-        # 简单logger配置
+        # 简单logger配置 - 只输出消息内容
         logging.basicConfig(level=logging.INFO, format='%(message)s')
         logger = logging.getLogger(__name__)
         
