@@ -129,21 +129,18 @@ class UniversalHNNRetrainer:
                 y0 = np.concatenate([self.env.q.flatten(), self.env.p.flatten()])
             else:
                 y0 = np.random.rand(self.system_dim) * 2 - 1
-        
         # 积分
         sol = scipy.integrate.solve_ivp(
-            self._dynamics_wrapper, t_span, y0, t_eval=t_eval, rtol=1e-10
+            self._dynamics_wrapper, t_span, y0, t_eval=t_eval
         )
         
         coords = sol.y
-        
         # 计算导数
         dydt = []
         for i in range(len(t_eval)):
             state = coords[:, i]
             dydt.append(self._dynamics_wrapper(t_eval[i], state))
         dydt = np.array(dydt).T
-        
         # 添加噪声
         coords += np.random.randn(*coords.shape) * noise_std
         
@@ -213,7 +210,7 @@ class UniversalHNNRetrainer:
         
         for step in range(total_steps + 1):
             data = self.get_dataset()
-
+ 
             # 数据移动到GPU
             x = torch.tensor(data['x'], requires_grad=True, dtype=torch.float32).to(device)
             test_x = torch.tensor(data['test_x'], requires_grad=True, dtype=torch.float32).to(device)
