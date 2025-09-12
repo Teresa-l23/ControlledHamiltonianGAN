@@ -189,7 +189,6 @@ def qualitative_results_latent(
         n_frames=n_frames,
     )
     trajectory = trajectory[:, 0, : experiment.ndim_q].data.cpu().numpy().squeeze()
-    print(f"label_and_props shape: {label_and_props.shape}, eps_motion shape: {eps_motion.shape}")
     
     eps = torch.cat([label_and_props, eps_motion], dim=1)
     experiment.rnn.initHidden(batch_size)
@@ -202,7 +201,6 @@ def qualitative_results_latent(
 
     size_train = X_train.shape[0]
     X = np.vstack((X_train, X_test, X_traj))
-    print(X.shape)
     
     system_labels = None
     if multi_system:
