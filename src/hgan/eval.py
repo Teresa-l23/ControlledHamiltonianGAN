@@ -184,24 +184,25 @@ def qualitative_results_latent(
     Z, _, eps_motion = experiment.get_latent_sample(
         batch_size=batch_size, n_frames=1, label_and_props=label_and_props
     )  # shape (batch_size, n_frames, |ndim_q + ndim_p + ndim_content + ndim_label|, 1, 1)
-
     trajectory, _ = experiment.rnn(
         torch.concat((label_and_props[0], eps_motion[0])).unsqueeze(0),
         n_frames=n_frames,
     )
     trajectory = trajectory[:, 0, : experiment.ndim_q].data.cpu().numpy().squeeze()
-
-    X_train = [
-        Z[i, 0, : experiment.ndim_q].data.cpu().numpy().squeeze()
-        for i in range(batch_size)
-    ]
-    X_train = np.asarray(X_train).reshape(
-        -1, experiment.ndim_q
-    )  # shape (batch_size, ndim_q)
-    X_test = trajectory
+    print(f"label_and_props shape: {label_and_props.shape}, eps_motion shape: {eps_motion.shape}")
+    
+    eps = torch.cat([label_and_props, eps_motion], dim=1)
+    experiment.rnn.initHidden(batch_size)
+    Z_after, _ = experiment.rnn(eps, n_frames=15)
+    Z_after = Z_after.transpose(1, 0)
+    X_train = Z[:, 0, : experiment.ndim_q].data.cpu().numpy().reshape(-1, experiment.ndim_q)
+    
+    X_test = Z_after[:, -1, : experiment.ndim_q].data.cpu().numpy().reshape(-1, experiment.ndim_q)
+    X_traj = trajectory
 
     size_train = X_train.shape[0]
-    X = np.vstack((X_train, X_test))
+    X = np.vstack((X_train, X_test, X_traj))
+    print(X.shape)
     
     system_labels = None
     if multi_system:
@@ -213,7 +214,6 @@ def qualitative_results_latent(
             system_labels.extend([sys_idx] * (end_idx - start_idx))
         system_labels = np.array(system_labels)
         system_colors = ['red', 'blue', 'green', 'orange', 'purple']
-
     for projection_name in projections:
         if projection_name == "tsne":
             # Generate separate plots for each perplexity value
@@ -223,12 +223,12 @@ def qualitative_results_latent(
                     layout="constrained",
                     dpi=300,  # High resolution for clarity
                 )
-
                 projection = TSNE(n_components=2, perplexity=p, init="random")
                 projected = projection.fit_transform(X)
 
                 projected_train = projected[:size_train]
-                projected_test = projected[size_train:]
+                projected_test = projected[size_train:2*size_train]
+                projected_traj = projected[2*size_train:]
                 
                 if multi_system and system_labels is not None:
                     # Plot different systems with different colors
@@ -237,12 +237,25 @@ def qualitative_results_latent(
                         if np.any(mask):
                             system_name = ["mass_spring", "pendulum", "double_pendulum", "two_body", "three_body"][sys_idx]
                             ax.scatter(projected_train[mask, 0], projected_train[mask, 1], 
-                                     c=system_colors[sys_idx], marker='.', label=system_name, alpha=0.7)
-                    ax.plot(projected_test[:, 0], projected_test[:, 1], "x", label="trajectory")
-                    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                                     c=system_colors[sys_idx], marker='o', label=f"{system_name}_initial", 
+                                     alpha=0.6, s=25, edgecolors='none')
+                            ax.scatter(projected_test[mask, 0], projected_test[mask, 1], 
+                                     c=system_colors[sys_idx], marker='o', label=f"{system_name}_step15", 
+                                     alpha=0.6, s=25, edgecolors='none')
+                    ax.scatter(projected_traj[:, 0], projected_traj[:, 1], c='orange', marker='x', label="Trajectory", 
+                           s=30, alpha=0.7)
+                    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
                 else:
-                    ax.plot(projected_train[:, 0], projected_train[:, 1], ".")
-                    # ax.plot(projected_test[:, 0], projected_test[:, 1], "x")
+                    ax.scatter(projected_train[:, 0], projected_train[:, 1], 
+                             c='#3498db', marker='o', label="Initial conditions", 
+                             alpha=0.6, s=25, edgecolors='none')
+                    ax.scatter(projected_test[:, 0], projected_test[:, 1], 
+                             c='#e74c3c', marker='o', label="After 15 RNN steps", 
+                             alpha=0.6, s=25, edgecolors='none')
+                    ax.scatter(projected_traj[:, 0], projected_traj[:, 1], c='orange', marker='x', label="Trajectory", 
+                           s=30, alpha=0.7)
+                    ax.legend(loc='upper right', frameon=True, fancybox=True, 
+                            shadow=True, framealpha=0.9)
                 ax.axis("off")
                 
                 # Save each perplexity plot separately with high quality
@@ -254,6 +267,7 @@ def qualitative_results_latent(
             projection = PCA(n_components=2)
             projected_train = projection.fit_transform(X_train)
             projected_test = projection.transform(X_test)
+            projected_traj = projection.transform(X_traj)
             fig, ax = plt.subplots(figsize=(4, 6), dpi=300)  # High resolution for clarity
             
             if multi_system and system_labels is not None:
@@ -263,12 +277,25 @@ def qualitative_results_latent(
                     if np.any(mask):
                         system_name = ["mass_spring", "pendulum", "double_pendulum", "two_body", "three_body"][sys_idx]
                         ax.scatter(projected_train[mask, 0], projected_train[mask, 1], 
-                                 c=system_colors[sys_idx], marker='.', label=system_name, alpha=0.7)
-                ax.plot(projected_test[:, 0], projected_test[:, 1], "kx", markersize=8, label="trajectory")
-                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                                 c=system_colors[sys_idx], marker='o', label=f"{system_name}_initial", 
+                                 alpha=0.6, s=25, edgecolors='none')
+                        ax.scatter(projected_test[mask, 0], projected_test[mask, 1], 
+                                 c=system_colors[sys_idx], marker='o', label=f"{system_name}_step15", 
+                                 alpha=0.6, s=25, edgecolors='none')
+                ax.scatter(projected_traj[:, 0], projected_traj[:, 1], c='orange', marker='x', label="Trajectory", 
+                           s=30, alpha=0.7)
+                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
             else:
-                ax.plot(projected_train[:, 0], projected_train[:, 1], ".")
-                ax.plot(projected_test[:, 0], projected_test[:, 1], "x")
+                ax.scatter(projected_train[:, 0], projected_train[:, 1], 
+                         c='#3498db', marker='o', label="Initial conditions", 
+                         alpha=0.6, s=25, edgecolors='none')
+                ax.scatter(projected_test[:, 0], projected_test[:, 1], 
+                         c='#e74c3c', marker='o', label="After 15 RNN steps", 
+                         alpha=0.6, s=25, edgecolors='none')
+                ax.scatter(projected_traj[:, 0], projected_traj[:, 1], c='orange', marker='x', label="Trajectory", 
+                           s=30, alpha=0.7)
+                ax.legend(loc='upper right', frameon=True, fancybox=True, 
+                        shadow=True, framealpha=0.9)
             ax.axis("off")
             
             # Save PCA plot with high quality
