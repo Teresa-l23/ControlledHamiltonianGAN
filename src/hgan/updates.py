@@ -236,7 +236,7 @@ def update_G(
     #     )
 
     # latent
-    if rnn_type == "hnn_phase_space":
+    if rnn_type == "hnn_phase_space" and cyclic_coord_loss > 0.0 :
         dlatent = fake_data["dlatent"]  # (dqdt, dpdt)
         dpdt = dlatent[:, :, q_size:]
         latent_loss = (
