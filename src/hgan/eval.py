@@ -190,70 +190,37 @@ def qualitative_results_latent(
     )
     trajectory = trajectory[:, 0, : experiment.ndim_q].data.cpu().numpy().squeeze()
     
-    eps = torch.cat([label_and_props, eps_motion], dim=1)
-    experiment.rnn.initHidden(batch_size)
-    Z_after, _ = experiment.rnn(eps, n_frames=15)
-    Z_after = Z_after.transpose(1, 0)
+    # Extract initial conditions from latent space
     X_train = Z[:, 0, : experiment.ndim_q].data.cpu().numpy().reshape(-1, experiment.ndim_q)
-    
-    X_test = Z_after[:, -1, : experiment.ndim_q].data.cpu().numpy().reshape(-1, experiment.ndim_q)
     X_traj = trajectory
 
+    # Combine data for projection
     size_train = X_train.shape[0]
-    X = np.vstack((X_train, X_test, X_traj))
+    X = np.vstack((X_train, X_traj))
     
-    system_labels = None
-    if multi_system:
-        samples_per_system = batch_size // 5
-        system_labels = []
-        for sys_idx in range(5):
-            start_idx = sys_idx * samples_per_system
-            end_idx = batch_size if sys_idx == 4 else (sys_idx + 1) * samples_per_system
-            system_labels.extend([sys_idx] * (end_idx - start_idx))
-        system_labels = np.array(system_labels)
-        system_colors = ['red', 'blue', 'green', 'orange', 'purple']
     for projection_name in projections:
         if projection_name == "tsne":
             # Generate separate plots for each perplexity value
             for p in perplexity_values:
                 fig, ax = plt.subplots(
-                    figsize=(4, 6),  # Original figsize (20, 6) divided by 5
+                    figsize=(4, 6),
                     layout="constrained",
-                    dpi=300,  # High resolution for clarity
+                    dpi=300,
                 )
                 projection = TSNE(n_components=2, perplexity=p, init="random")
                 projected = projection.fit_transform(X)
 
                 projected_train = projected[:size_train]
-                projected_test = projected[size_train:2*size_train]
-                projected_traj = projected[2*size_train:]
+                projected_traj = projected[size_train:]
                 
-                if multi_system and system_labels is not None:
-                    # Plot different systems with different colors
-                    for sys_idx in range(5):  # 5 systems
-                        mask = np.array(system_labels) == sys_idx
-                        if np.any(mask):
-                            system_name = ["mass_spring", "pendulum", "double_pendulum", "two_body", "three_body"][sys_idx]
-                            ax.scatter(projected_train[mask, 0], projected_train[mask, 1], 
-                                     c=system_colors[sys_idx], marker='o', label=f"{system_name}_initial", 
-                                     alpha=0.6, s=25, edgecolors='none')
-                            ax.scatter(projected_test[mask, 0], projected_test[mask, 1], 
-                                     c=system_colors[sys_idx], marker='o', label=f"{system_name}_step15", 
-                                     alpha=0.6, s=25, edgecolors='none')
-                    ax.scatter(projected_traj[:, 0], projected_traj[:, 1], c='orange', marker='x', label="Trajectory", 
-                           s=30, alpha=0.7)
-                    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
-                else:
-                    ax.scatter(projected_train[:, 0], projected_train[:, 1], 
-                             c='#3498db', marker='o', label="Initial conditions", 
-                             alpha=0.6, s=25, edgecolors='none')
-                    ax.scatter(projected_test[:, 0], projected_test[:, 1], 
-                             c='#e74c3c', marker='o', label="After 15 RNN steps", 
-                             alpha=0.6, s=25, edgecolors='none')
-                    ax.scatter(projected_traj[:, 0], projected_traj[:, 1], c='orange', marker='x', label="Trajectory", 
-                           s=30, alpha=0.7)
-                    ax.legend(loc='upper right', frameon=True, fancybox=True, 
-                            shadow=True, framealpha=0.9)
+                ax.scatter(projected_train[:, 0], projected_train[:, 1], 
+                         c='#3498db', marker='o', label="Initial conditions", 
+                         alpha=0.6, s=25, edgecolors='none')
+                ax.scatter(projected_traj[:, 0], projected_traj[:, 1], 
+                         c='orange', marker='x', label="Trajectory", 
+                         s=30, alpha=0.7)
+                ax.legend(loc='upper right', frameon=True, fancybox=True, 
+                        shadow=True, framealpha=0.9)
                 ax.axis("off")
                 
                 # Save each perplexity plot separately with high quality
@@ -261,46 +228,82 @@ def qualitative_results_latent(
                 os.makedirs(os.path.dirname(png_path), exist_ok=True)
                 plt.savefig(png_path, dpi=300, bbox_inches='tight', facecolor='white')
                 plt.close(fig=fig)
-        else:  # PCA
-            projection = PCA(n_components=2)
-            projected_train = projection.fit_transform(X_train)
-            projected_test = projection.transform(X_test)
-            projected_traj = projection.transform(X_traj)
-            fig, ax = plt.subplots(figsize=(4, 6), dpi=300)  # High resolution for clarity
+        else:  # PCA with eigenvalue analysis
+            # Fit PCA on the full latent dimension to analyze all components
+            pca_full = PCA()
+            pca_full.fit(X_train)
             
-            if multi_system and system_labels is not None:
-                # Plot different systems with different colors
-                for sys_idx in range(5):  # 5 systems
-                    mask = np.array(system_labels) == sys_idx
-                    if np.any(mask):
-                        system_name = ["mass_spring", "pendulum", "double_pendulum", "two_body", "three_body"][sys_idx]
-                        ax.scatter(projected_train[mask, 0], projected_train[mask, 1], 
-                                 c=system_colors[sys_idx], marker='o', label=f"{system_name}_initial", 
-                                 alpha=0.6, s=25, edgecolors='none')
-                        ax.scatter(projected_test[mask, 0], projected_test[mask, 1], 
-                                 c=system_colors[sys_idx], marker='o', label=f"{system_name}_step15", 
-                                 alpha=0.6, s=25, edgecolors='none')
-                ax.scatter(projected_traj[:, 0], projected_traj[:, 1], c='orange', marker='x', label="Trajectory", 
-                           s=30, alpha=0.7)
-                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
-            else:
-                ax.scatter(projected_train[:, 0], projected_train[:, 1], 
-                         c='#3498db', marker='o', label="Initial conditions", 
-                         alpha=0.6, s=25, edgecolors='none')
-                ax.scatter(projected_test[:, 0], projected_test[:, 1], 
-                         c='#e74c3c', marker='o', label="After 15 RNN steps", 
-                         alpha=0.6, s=25, edgecolors='none')
-                ax.scatter(projected_traj[:, 0], projected_traj[:, 1], c='orange', marker='x', label="Trajectory", 
-                           s=30, alpha=0.7)
-                ax.legend(loc='upper right', frameon=True, fancybox=True, 
-                        shadow=True, framealpha=0.9)
-            ax.axis("off")
+            # Get eigenvalues (explained variance)
+            eigenvalues = pca_full.explained_variance_
+            explained_variance_ratio = pca_full.explained_variance_ratio_
+            cumulative_variance = np.cumsum(explained_variance_ratio)
             
-            # Save PCA plot with high quality
-            png_path = f"{png_paths_prefix}_pca.png"
+            # Create a figure with two subplots
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), dpi=300)
+            
+            # Plot 1: Eigenvalue spectrum (scree plot)
+            n_components = min(len(eigenvalues), 20)  # Show first 20 components
+            ax1.bar(range(1, n_components + 1), eigenvalues[:n_components], 
+                   color='#3498db', alpha=0.7, edgecolor='black')
+            ax1.set_xlabel('Principal Component', fontsize=12, fontweight='bold')
+            ax1.set_ylabel('Eigenvalue (Explained Variance)', fontsize=12, fontweight='bold')
+            ax1.set_title('PCA Eigenvalue Spectrum', fontsize=14, fontweight='bold')
+            ax1.grid(True, alpha=0.3, linestyle='--')
+            
+            # Add cumulative variance on secondary y-axis
+            ax1_twin = ax1.twinx()
+            ax1_twin.plot(range(1, n_components + 1), cumulative_variance[:n_components] * 100,
+                         color='#e74c3c', marker='o', linewidth=2, markersize=4, label='Cumulative')
+            ax1_twin.set_ylabel('Cumulative Variance Explained (%)', fontsize=12, fontweight='bold', color='#e74c3c')
+            ax1_twin.tick_params(axis='y', labelcolor='#e74c3c')
+            ax1_twin.set_ylim([0, 105])
+            
+            # Plot 2: 2D PCA projection
+            pca_2d = PCA(n_components=2)
+            projected_train = pca_2d.fit_transform(X_train)
+            projected_traj = pca_2d.transform(X_traj)
+            
+            ax2.scatter(projected_train[:, 0], projected_train[:, 1], 
+                       c='#3498db', marker='o', label="Initial conditions", 
+                       alpha=0.6, s=25, edgecolors='none')
+            ax2.scatter(projected_traj[:, 0], projected_traj[:, 1], 
+                       c='orange', marker='x', label="Trajectory", 
+                       s=30, alpha=0.7)
+            ax2.set_xlabel(f'PC1 ({pca_2d.explained_variance_ratio_[0]*100:.1f}%)', fontsize=12, fontweight='bold')
+            ax2.set_ylabel(f'PC2 ({pca_2d.explained_variance_ratio_[1]*100:.1f}%)', fontsize=12, fontweight='bold')
+            ax2.set_title('PCA 2D Projection', fontsize=14, fontweight='bold')
+            ax2.legend(loc='upper right', frameon=True, fancybox=True, 
+                      shadow=True, framealpha=0.9)
+            ax2.grid(True, alpha=0.3, linestyle='--')
+            
+            plt.tight_layout()
+            
+            # Save PCA analysis plot
+            png_path = f"{png_paths_prefix}_pca_eigenvalue_analysis.png"
             os.makedirs(os.path.dirname(png_path), exist_ok=True)
             plt.savefig(png_path, dpi=300, bbox_inches='tight', facecolor='white')
             plt.close(fig=fig)
+            
+            # Save eigenvalue data to text file for further analysis
+            eigenvalue_file = f"{png_paths_prefix}_pca_eigenvalues.txt"
+            with open(eigenvalue_file, 'w') as f:
+                f.write("PCA Eigenvalue Analysis\n")
+                f.write("=" * 60 + "\n\n")
+                f.write(f"Total dimensions: {len(eigenvalues)}\n")
+                f.write(f"First eigenvalue: {eigenvalues[0]:.6f}\n")
+                f.write(f"Variance explained by PC1: {explained_variance_ratio[0]*100:.2f}%\n\n")
+                
+                # Find intrinsic dimensionality (95% variance threshold)
+                dim_95 = np.argmax(cumulative_variance >= 0.95) + 1
+                f.write(f"Intrinsic dimensionality (95% variance): {dim_95}\n")
+                f.write(f"Cumulative variance with {dim_95} components: {cumulative_variance[dim_95-1]*100:.2f}%\n\n")
+                
+                f.write("Component-wise breakdown:\n")
+                f.write("-" * 60 + "\n")
+                f.write(f"{'PC':<6}{'Eigenvalue':<15}{'Var %':<12}{'Cumulative %':<15}\n")
+                f.write("-" * 60 + "\n")
+                for i in range(min(len(eigenvalues), 20)):
+                    f.write(f"{i+1:<6}{eigenvalues[i]:<15.6f}{explained_variance_ratio[i]*100:<12.2f}{cumulative_variance[i]*100:<15.2f}\n")
 
 
 def generate_hnn_trajectories_for_comparison(
