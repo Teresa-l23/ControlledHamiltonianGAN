@@ -381,19 +381,35 @@ def main(*args):
     device = "cpu" if not torch.cuda.is_available() else None
 
     args = get_parser().parse_args(args)
-    config = load_config(args.config_path)
+    
+    # Handle both file and directory paths for config_path
+    if os.path.isdir(args.config_path):
+        # If config_path is a directory, look for configuration.ini inside it
+        config_dir = args.config_path
+        config_file = os.path.join(config_dir, "configuration.ini")
+        if not os.path.exists(config_file):
+            print(f"Error: No configuration.ini found in {config_dir}")
+            return
+        config = load_config(config_file)
+    else:
+        # config_path is a file
+        config_dir = os.path.dirname(args.config_path)
+        config = load_config(args.config_path)
 
     output_folder = args.output_folder
     config.save(output_folder)
 
     experiment = Experiment(config)
     if args.override_output_folder:
-        experiment.config.paths.output = os.path.dirname(args.config_path)
+        # Use the config directory as the output path (where checkpoints are)
+        experiment.config.paths.output = config_dir
     experiment.eval()
     
     if args.generate_trajectories:
         saved_epochs = experiment.saved_epochs()
+        print(f"Found {len(saved_epochs)} saved epochs: {saved_epochs}")
         if not saved_epochs:
+            print(f"No checkpoint files found in {experiment.config.paths.output}")
             return
         
         target_epoch = args.trajectory_epoch if args.trajectory_epoch else saved_epochs[-1]
@@ -487,6 +503,12 @@ def main(*args):
         multi_props = torch.cat(multi_props, dim=0)
 
     saved_epochs = experiment.saved_epochs()
+    print(f"Found {len(saved_epochs)} saved epochs: {saved_epochs}")
+    if not saved_epochs:
+        print(f"No checkpoint files found in {experiment.config.paths.output}")
+        print("Make sure the output path in config matches where your .pth files are located.")
+        return
+    
     for epoch in saved_epochs[:: args.every_nth]:
         experiment.load_epoch(epoch, device=device)
         
