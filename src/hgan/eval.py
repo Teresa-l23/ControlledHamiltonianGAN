@@ -177,7 +177,7 @@ def qualitative_results_latent(
     perplexity_values=(2, 5, 30, 50, 100),
     title="",
     n_frames=30,
-    projections=("tsne", "pca"),
+    projections=("pca"),
     multi_system=False,
 ):
     batch_size = label_and_props.shape[0]
@@ -503,7 +503,7 @@ def main(*args):
         multi_props = torch.cat(multi_props, dim=0)
 
     saved_epochs = experiment.saved_epochs()
-    print(f"Found {len(saved_epochs)} saved epochs: {saved_epochs}")
+    # print(f"Found {len(saved_epochs)} saved epochs: {saved_epochs}")
     if not saved_epochs:
         print(f"No checkpoint files found in {experiment.config.paths.output}")
         print("Make sure the output path in config matches where your .pth files are located.")
