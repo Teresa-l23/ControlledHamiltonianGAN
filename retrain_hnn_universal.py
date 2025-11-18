@@ -14,10 +14,10 @@ import time
 import logging
 
 # 添加路径
-PROJECT_PATH = '/home/jiayinliu/Desktop/ControlledHamiltonianGAN_0'
+PROJECT_PATH = '/home/jiayinliu/Desktop/Experiment/LowDimConditionalHGan'
 sys.path.append(os.path.join(PROJECT_PATH, 'hamiltonian-nn'))
-sys.path.append(os.path.join(PROJECT_PATH, 'src'))
-sys.path.append(os.path.join(PROJECT_PATH, 'src/hgan/hgn/environments'))
+sys.path.append(os.path.join(PROJECT_PATH, 'ControlledHamiltonianGAN_4/src'))
+sys.path.append(os.path.join(PROJECT_PATH, 'ControlledHamiltonianGAN_4/src/hgan/hgn/environments'))
 
 from nn_models import MLP
 from hnn import HNN
@@ -175,7 +175,7 @@ class UniversalHNNRetrainer:
         
         return split_data
     
-    def train_hnn(self, total_steps=1000, learning_rate=1e-3, hidden_dim=200):
+    def train_hnn(self, total_steps=1000, learning_rate=1e-3, hidden_dim=200, save_dir='hnn_model'):
         """训练HNN模型"""
         
         # 简单logger配置 - 只输出消息内容
@@ -188,6 +188,10 @@ class UniversalHNNRetrainer:
         if torch.cuda.is_available():
             print(f"  GPU名称: {torch.cuda.get_device_name(0)}")
             print(f"  GPU内存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+        
+        # 创建保存目录
+        save_path = os.path.join(PROJECT_PATH, save_dir)
+        os.makedirs(save_path, exist_ok=True)
                 
         output_dim = self.system_dim if False else 2  # baseline=False，所以输出维度固定为2
         nn_model = MLP(self.system_dim, hidden_dim, output_dim, 'tanh')
@@ -239,6 +243,12 @@ class UniversalHNNRetrainer:
                 logger.info(f"Step {step:4d} | train_loss: {loss.item():.6e} | test_loss: {test_loss.item():.6e} | time: {step_elapsed:.1f}s | total: {total_elapsed:.1f}s | eta: {estimated_remaining_time:.1f}s")
                 
                 step_start_time = current_time
+            
+            # 每1000步保存模型
+            if step % 1000 == 0 and step > 0:
+                checkpoint_path = os.path.join(save_path, f'custom_hnn_{self.hgn_system_name}_step{step}.pth')
+                torch.save(hnn_model.state_dict(), checkpoint_path)
+                logger.info(f"  ✓ 模型检查点已保存: {checkpoint_path}")
         
         # 训练完成时间统计
         total_training_time = time.time() - start_time
@@ -257,6 +267,7 @@ def main():
     parser.add_argument('--total_steps', type=int, default=50000, help='训练步数')
     parser.add_argument('--learning_rate', type=float, default=1e-3, help='学习率')
     parser.add_argument('--hidden_dim', type=int, default=200, help='隐藏层维度')
+    parser.add_argument('--save_dir', type=str, default='hnn_model', help='模型保存目录')
     
     args = parser.parse_args()
     
@@ -269,14 +280,15 @@ def main():
     model, stats = retrainer.train_hnn(
         total_steps=args.total_steps,
         learning_rate=args.learning_rate,
-        hidden_dim=args.hidden_dim
+        hidden_dim=args.hidden_dim,
+        save_dir=args.save_dir
     )
     
-    # 保存模型 - 使用清晰的命名
+    # 保存最终模型 - 使用清晰的命名
     output_filename = f'custom_hnn_{args.system}_model.pth'
-    output_path = os.path.join(PROJECT_PATH, output_filename)
+    output_path = os.path.join(PROJECT_PATH, args.save_dir, output_filename)
     torch.save(model.state_dict(), output_path)
-    print(f"\\n✓ 模型保存到: {output_path}")
+    print(f"\\n✓ 最终模型保存到: {output_path}")
     
     print(f"\\n现在可以使用这个重新训练的{args.system}模型进行公平对比！")
 
