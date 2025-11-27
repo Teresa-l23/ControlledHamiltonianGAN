@@ -1,7 +1,7 @@
 cd src
 python -m hgan.eval \
-  --config-path hgan/configuration.ini \
-  --output-folder ../eval_results \
-  --system_name pendulum \
-  --perplexity 2 5 30 50
+  --config-path hgan/output/2B_0_1 \
+  --output-folder eval_results \
+  --override-output-folder
+  --system_name two_body 
 cd ..

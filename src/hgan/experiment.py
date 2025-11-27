@@ -13,7 +13,7 @@ from torch.autograd import Variable
 import hgan.data
 from hgan.configuration import save_config
 from hgan.models import GRU, HNNSimple, HNNPhaseSpace, HNNMass
-from hgan.dataset import RealtimeDataset, HGNRealtimeDataset, ToyPhysicsDatasetNPZ
+from hgan.dataset import RealtimeDataset, HGNRealtimeDataset, ToyPhysicsDatasetNPZ, LipsonPendulumDataset
 from hgan.utils import setup_reproducibility, timeSince
 from hgan.fvd import compute_fvd
 from hgan.models import Discriminator_I, Discriminator_V, Generator_I, TrajectoryGenerator, TrajectoryDiscriminator
@@ -137,6 +137,18 @@ class Experiment:
                 img_size=config.experiment.img_size,
                 normalize=config.video.normalize,
             )
+        elif config.experiment.rt_data_generator == "lipson":
+            # Lipson pendulum dataset (real or simulated)
+            experiment_name = getattr(config.experiment, "lipson_experiment", "pend-real")
+            save_dir = getattr(config.experiment, "lipson_data_dir", None)
+            dataset = LipsonPendulumDataset(
+                experiment_name=experiment_name,
+                save_dir=save_dir,
+                train=True,
+                test_split=0.8,
+                num_frames=config.video.generator_frames,
+                delta=None,
+            )
         else:
             dataset = ToyPhysicsDatasetNPZ(
                 datapath=self.datapath, num_frames=config.video.generator_frames
@@ -239,7 +251,10 @@ class Experiment:
 
     @property
     def system_embedding(self):
-        return self.dataloader.dataset.system_embedding
+        # For Lipson dataset, return None as there's no system embedding
+        if hasattr(self.dataloader.dataset, 'system_embedding'):
+            return self.dataloader.dataset.system_embedding
+        return None
 
     def saved_epochs(self):
         saved_pths = sorted(glob.glob(self.config.paths.output + "/Di_*.pth"))
@@ -259,7 +274,8 @@ class Experiment:
                 self.config.paths.output, f"{which}_{epoch:0>6}.pth"
             )
             model = getattr(self, which)
-            model.load_state_dict(torch.load(file_path, map_location=device))
+            if model is not None:
+                model.load_state_dict(torch.load(file_path, map_location=device))
 
         return epoch
 
@@ -267,13 +283,15 @@ class Experiment:
         for which in self.model_names:
             if not which.startswith("optim"):
                 model = getattr(self, which)
-                model.eval()
+                if model is not None:
+                    model.eval()
 
     def no_eval(self):
         for which in self.model_names:
             if not which.startswith("optim"):
                 model = getattr(self, which)
-                model.train()
+                if model is not None:
+                    model.train()
 
     def save_video(self, folder, video, epoch=None, filename=None, prefix="video_"):
         os.makedirs(folder, exist_ok=True)
@@ -296,7 +314,8 @@ class Experiment:
                 self.config.paths.output, f"{which}_{epoch:0>6}.pth"
             )
             model = getattr(self, which)
-            torch.save(model.state_dict(), file_path)
+            if model is not None:
+                torch.save(model.state_dict(), file_path)
 
     def get_random_content_vector(self, batch_size, d_C, device, n_frames):
         z_C = Variable(torch.randn(batch_size, d_C))
@@ -622,7 +641,8 @@ class Experiment:
         for which in self.model_names:
             if not which.startswith("optim"):
                 model = getattr(self, which)
-                model.eval()
+                if model is not None:
+                    model.eval()
 
         save_config(self.config.paths.output)
         setup_reproducibility(seed=self.seed)
@@ -675,13 +695,15 @@ class Experiment:
                 )
             
             if epoch % self.make_comparison_every == 0 or last_epoch:
-                self.dataset.comparison(
-                    fake_videos[-1].detach().cpu().numpy(), 
-                    real_data["mask"][-1].detach().cpu().numpy(), 
-                    self.config.paths.output,
-                    epoch = epoch,
-                    prefix="comp_"
-                )
+                # Only call comparison if dataset has this method (HGN datasets)
+                if hasattr(self.dataset, 'comparison'):
+                    self.dataset.comparison(
+                        fake_videos[-1].detach().cpu().numpy(), 
+                        real_data["mask"][-1].detach().cpu().numpy(), 
+                        self.config.paths.output,
+                        epoch = epoch,
+                        prefix="comp_"
+                    )
             
             if epoch % self.save_model_every == 0 or last_epoch:
                 self.save_epoch(epoch)
@@ -729,6 +751,7 @@ class ExperimentOld(Experiment):
                 self.config.paths.output, f"{names[which]}_epoch-{epoch}.{exts[which]}"
             )
             model = getattr(self, which)
-            model.load_state_dict(torch.load(file_path))
+            if model is not None:
+                model.load_state_dict(torch.load(file_path))
 
         return epoch

@@ -184,15 +184,29 @@ def qualitative_results_latent(
     Z, _, eps_motion = experiment.get_latent_sample(
         batch_size=batch_size, n_frames=1, label_and_props=label_and_props
     )  # shape (batch_size, n_frames, |ndim_q + ndim_p + ndim_content + ndim_label|, 1, 1)
+    
+    # Generate trajectory - handle empty label_and_props for Lipson dataset
+    if label_and_props.shape[1] > 0:
+        trajectory_input = torch.concat((label_and_props[0], eps_motion[0])).unsqueeze(0)
+    else:
+        trajectory_input = eps_motion[0].unsqueeze(0)
+    
     trajectory, _ = experiment.rnn(
-        torch.concat((label_and_props[0], eps_motion[0])).unsqueeze(0),
+        trajectory_input,
         n_frames=n_frames,
     )
-    trajectory = trajectory[:, 0, : experiment.ndim_q].data.cpu().numpy().squeeze()
+    trajectory = trajectory[:, 0, : experiment.ndim_q].data.cpu().numpy()
     
     # Extract initial conditions from latent space
     X_train = Z[:, 0, : experiment.ndim_q].data.cpu().numpy().reshape(-1, experiment.ndim_q)
-    X_traj = trajectory
+    
+    # Reshape trajectory to 2D: (n_frames, ndim_q)
+    if trajectory.ndim == 1:
+        # If squeezed to 1D, reshape to (n_frames, 1)
+        X_traj = trajectory.reshape(-1, 1)
+    else:
+        # Should be (n_frames, ndim_q)
+        X_traj = trajectory.reshape(-1, experiment.ndim_q)
 
     # Combine data for projection
     size_train = X_train.shape[0]
@@ -324,31 +338,33 @@ def generate_hnn_trajectories_for_comparison(
     if epoch is None:
         epoch = getattr(experiment, 'current_epoch', 'unknown')
     
-    if system_name is None or system_name == "variable":
-        systems_to_process = ["mass_spring", "pendulum", "double_pendulum", "two_body", "three_body"]
-    else:
-        systems_to_process = [system_name]
+    # Check if using Lipson dataset (no system embedding)
+    is_lipson_dataset = experiment.system_embedding is None
     
-    for sys_name in systems_to_process:
-        system_output_dir = os.path.join(trajectory_output_dir, sys_name)
+    if is_lipson_dataset:
+        # For Lipson dataset, use the experiment name as system name
+        lipson_experiment = getattr(experiment.config.experiment, "lipson_experiment", "pend-real")
+        systems_to_process = [lipson_experiment]
+        system_output_dir = os.path.join(trajectory_output_dir, lipson_experiment)
         os.makedirs(system_output_dir, exist_ok=True)
         
-        system_index = all_systems_hgn.index(sys_name)
-        samples_generated = 0
+        # Get the full real trajectory from the dataset
+        real_trajectory_full, real_mask = experiment.dataloader.dataset.get_full_trajectory()
+        real_trajectory_np = real_trajectory_full.numpy()  # (T, 2, 1)
         
+        samples_generated = 0
         while samples_generated < num_samples:
             remaining_samples = num_samples - samples_generated
             samples_to_save = min(experiment.batch_size, remaining_samples)
             
-            if system_label_and_props is not None:
-                batch_label_and_props = system_label_and_props.repeat(experiment.batch_size, 1).to(device)
-            else:
-                batch_label_and_props = None
-                
+            # For Lipson dataset: empty tensor with shape (batch_size, 0)
+            batch_label_and_props = torch.empty(experiment.batch_size, 0, dtype=torch.float32).to(device)
+            
+            # Mask for single particle
             if system_mask is not None:
                 mask = system_mask.repeat(experiment.batch_size, 1).to(device)
             else:
-                mask = None
+                mask = torch.ones(experiment.batch_size, 1, dtype=torch.float32).to(device)
             
             fake_data = experiment.get_fake_data(
                 n_frames=experiment.config.video.generator_frames,
@@ -362,18 +378,115 @@ def generate_hnn_trajectories_for_comparison(
                 sample_idx = samples_generated + i
                 sample_trajectory = fake_videos[i].detach().cpu().numpy()
                 
-                save_path = os.path.join(system_output_dir, f"hnn_{sys_name}_{sample_idx:06d}_data.npz")
+                # For Lipson dataset, find the best matching segment in real trajectory
+                best_idx, best_rmse, all_rmses = experiment.dataloader.dataset.find_best_match(
+                    sample_trajectory, 
+                    real_trajectory_np
+                )
+                
+                # Extract the best matching segment
+                num_frames = sample_trajectory.shape[0]
+                real_segment = real_trajectory_np[best_idx:best_idx + num_frames]
+                
+                save_path = os.path.join(system_output_dir, f"hnn_{lipson_experiment}_{sample_idx:06d}_data.npz")
                 np.savez(
                     save_path,
                     fake=sample_trajectory,
-                    real=sample_trajectory,
-                    mask=system_mask,
-                    system_name=experiment.dataloader.dataset.system_name_mapping[sys_name],
+                    real=real_segment,
+                    mask=mask[0].detach().cpu().numpy(),
+                    system_name=lipson_experiment,
                     epoch=epoch,
-                    system_index=system_index
+                    best_match_idx=best_idx,
+                    best_match_rmse=best_rmse,
                 )
                             
             samples_generated += samples_to_save
+    else:
+        # Original HGN dataset logic
+        if system_name is None or system_name == "variable":
+            systems_to_process = ["mass_spring", "pendulum", "double_pendulum", "two_body", "three_body"]
+        else:
+            systems_to_process = [system_name]
+        
+        for sys_name in systems_to_process:
+            system_output_dir = os.path.join(trajectory_output_dir, sys_name)
+            os.makedirs(system_output_dir, exist_ok=True)
+            
+            system_index = all_systems_hgn.index(sys_name)
+            samples_generated = 0
+            
+            # Get system parameters for generating real trajectories
+            system_args_which = constant_physics_hgn[sys_name]
+            system_args = {
+                k: (v() if not isinstance(v, list) else [_v() for _v in v])
+                for k, v in system_args_which.items()
+            }
+            system_name_mapping = {
+                "mass_spring": "Spring",
+                "pendulum": "Pendulum",
+                "double_pendulum": "ChaoticPendulum",
+                "two_body": "NObjectGravity",
+                "three_body": "NObjectGravity",
+            }
+            mapped_system_name = system_name_mapping[sys_name]
+            system = EnvFactory.get_environment(mapped_system_name, **system_args)
+            delta = 0.05
+            
+            while samples_generated < num_samples:
+                remaining_samples = num_samples - samples_generated
+                samples_to_save = min(experiment.batch_size, remaining_samples)
+                
+                if system_label_and_props is not None:
+                    batch_label_and_props = system_label_and_props.repeat(experiment.batch_size, 1).to(device)
+                else:
+                    batch_label_and_props = None
+                    
+                if system_mask is not None:
+                    mask = system_mask.repeat(experiment.batch_size, 1).to(device)
+                else:
+                    mask = None
+                
+                fake_data = experiment.get_fake_data(
+                    n_frames=experiment.config.video.generator_frames,
+                    label_and_props=batch_label_and_props,
+                    mask=mask
+                )
+                
+                fake_videos = fake_data["videos"]
+                
+                for i in range(samples_to_save):
+                    sample_idx = samples_generated + i
+                    sample_trajectory = fake_videos[i].detach().cpu().numpy()
+                    
+                    # Generate real trajectory using physics simulation
+                    # Extract q and p from the fake trajectory (first two frames)
+                    mask_np = system_mask.detach().cpu().numpy() if system_mask is not None else np.ones(1)
+                    q_fake = system.extract_q(sample_trajectory, mask_np, frame_idx=0)
+                    q_fake_next = system.extract_q(sample_trajectory, mask_np, frame_idx=1)
+                    
+                    # Calculate momentum
+                    mass = np.atleast_1d(system_args["mass"])
+                    p_fake = mass[:, None] * (q_fake_next - q_fake) / delta
+                    
+                    # Generate real trajectory with same length as fake
+                    num_frames = sample_trajectory.shape[0]
+                    if mapped_system_name == 'NObjectGravity':
+                        real_trajectory = system.calculate_fixed_rollout(q_fake, p_fake, num_frames, delta)
+                    else:
+                        real_trajectory = system.calculate_fixed_rollout(q_fake.flatten(), p_fake.flatten(), num_frames, delta)
+                    
+                    save_path = os.path.join(system_output_dir, f"hnn_{sys_name}_{sample_idx:06d}_data.npz")
+                    np.savez(
+                        save_path,
+                        fake=sample_trajectory,
+                        real=real_trajectory,
+                        mask=system_mask.detach().cpu().numpy() if system_mask is not None else None,
+                        system_name=mapped_system_name,
+                        epoch=epoch,
+                        system_index=system_index
+                    )
+                                
+                samples_generated += samples_to_save
 
 
 def main(*args):
@@ -415,40 +528,49 @@ def main(*args):
         target_epoch = args.trajectory_epoch if args.trajectory_epoch else saved_epochs[-1]
         experiment.load_epoch(target_epoch, device=device)
         
-        system_particles_map = {
-            "mass_spring": 1,
-            "pendulum": 1, 
-            "double_pendulum": 2,
-            "two_body": 2,
-            "three_body": 3
-        }
+        # Check if using Lipson dataset (no system embedding)
+        is_lipson_dataset = experiment.system_embedding is None
         
-        system_label_and_props = None
-        mask = None
-        if args.system_name and args.system_name != "variable":
-            system_index = all_systems_hgn.index(args.system_name)
-            system_args = constant_physics_hgn[args.system_name]
-            system_args = {
-                k: (v() if not isinstance(v, list) else [_v() for _v in v])
-                for k, v in system_args.items()
+        if is_lipson_dataset:
+            # For Lipson dataset: unconditional generation, single particle
+            system_label_and_props = None
+            mask = torch.ones(1, dtype=torch.float32)
+        else:
+            # For HGN dataset: conditional generation with system properties
+            system_particles_map = {
+                "mass_spring": 1,
+                "pendulum": 1, 
+                "double_pendulum": 2,
+                "two_body": 2,
+                "three_body": 3
             }
-            system = EnvFactory.get_environment(
-                experiment.dataloader.dataset.system_name_mapping[args.system_name],
-                **system_args,
-            )
-            props = torch.tensor(system.physical_properties(vec_length=experiment.ndim_physics))
             
-            system_embedding = experiment.system_embedding(torch.tensor([system_index])).squeeze()
-            system_label_and_props = torch.cat([system_embedding, props]).unsqueeze(0)
-            
-            num_particles = system_particles_map[args.system_name]
-            mask = torch.zeros(config.experiment.max_n, dtype=torch.float32)
-            mask[:num_particles] = 1.0
+            system_label_and_props = None
+            mask = None
+            if args.system_name and args.system_name != "variable":
+                system_index = all_systems_hgn.index(args.system_name)
+                system_args = constant_physics_hgn[args.system_name]
+                system_args = {
+                    k: (v() if not isinstance(v, list) else [_v() for _v in v])
+                    for k, v in system_args.items()
+                }
+                system = EnvFactory.get_environment(
+                    experiment.dataloader.dataset.system_name_mapping[args.system_name],
+                    **system_args,
+                )
+                props = torch.tensor(system.physical_properties(vec_length=experiment.ndim_physics))
+                
+                system_embedding = experiment.system_embedding(torch.tensor([system_index])).squeeze()
+                system_label_and_props = torch.cat([system_embedding, props]).unsqueeze(0)
+                
+                num_particles = system_particles_map[args.system_name]
+                mask = torch.zeros(config.experiment.max_n, dtype=torch.float32)
+                mask[:num_particles] = 1.0
 
         generate_hnn_trajectories_for_comparison(
             experiment=experiment,
             output_folder=output_folder,
-            system_name=args.system_name,
+            system_name=args.system_name if not is_lipson_dataset else None,
             num_samples=args.num_trajectory_samples,
             epoch=target_epoch,
             device=device,
@@ -460,12 +582,15 @@ def main(*args):
     # Original evaluation code continues...
     batch_size = args.latent_batch_size
 
+    # Check if dataset has system_name_mapping (HGN datasets)
+    has_system_mapping = hasattr(experiment.dataloader.dataset, 'system_name_mapping')
+    
     # Check if we need to handle multiple systems
-    is_multi_system = args.system_name == "variable"
+    is_multi_system = has_system_mapping and args.system_name == "variable"
     all_system_names = ["mass_spring", "pendulum", "double_pendulum", "two_body", "three_body"]
 
-    if not is_multi_system:
-        # Single system handling as before
+    if has_system_mapping and not is_multi_system:
+        # Single system handling for HGN datasets
         system_index = all_systems_hgn.index(args.system_name)
         system_args = constant_physics_hgn[args.system_name]
         system_args = {
@@ -477,7 +602,7 @@ def main(*args):
             **system_args,
         )
         props = torch.tensor(system.physical_properties(vec_length=experiment.ndim_physics))
-    else:
+    elif is_multi_system:
         # Pre-compute all system properties for multi-system mode
         multi_props = []
         for sys_name in all_system_names:
@@ -512,7 +637,11 @@ def main(*args):
     for epoch in saved_epochs[:: args.every_nth]:
         experiment.load_epoch(epoch, device=device)
         
-        if is_multi_system:
+        # Prepare label_and_props based on dataset type
+        if not has_system_mapping:
+            # For Lipson dataset, create empty tensor with correct batch size
+            label_and_props = torch.empty(batch_size, 0).to(experiment.device)
+        elif is_multi_system:
             multi_labels = []
             for sys_name in all_system_names:
                 sys_index = all_systems_hgn.index(sys_name)
@@ -524,7 +653,8 @@ def main(*args):
                 multi_labels.append(sys_label_batch)
             multi_labels = torch.cat(multi_labels, dim=0)
             label_and_props = torch.cat([multi_labels, multi_props], dim=1).to(experiment.device)
-        else:
+        elif has_system_mapping:
+            # Single HGN system
             label_and_props = torch.cat(
                 (
                     experiment.system_embedding(torch.tensor([system_index])).squeeze(),
@@ -536,6 +666,7 @@ def main(*args):
                 .repeat(batch_size, 1)
                 .to(experiment.device)
             )  # (batch_size, ndim_label + ndim_physics)
+        # else: label_and_props is already set to empty tensor for Lipson dataset
 
         # Z, _, _ = experiment.get_latent_sample(
         #     batch_size=config.experiment.batch_size,

@@ -492,3 +492,307 @@ class HGNRealtimeDataset(Dataset):
 
         self.plot_2d_trajectory_comparison(trajectory, mask, rollout, file_path)
    
+class LipsonPendulumDataset(Dataset):
+    """
+    Dataset for real/simulated pendulum data from Lipson et al. 2009.
+    Processes data using the same approach as hamiltonian-nn/experiment-real/data.py
+    """
+    def __init__(
+        self,
+        *,
+        experiment_name="pend-real",  # or "pend-sim"
+        save_dir=None,
+        train=True,
+        test_split=0.8,
+        num_frames=16,
+        delta=None,
+    ):
+        """
+        Args:
+            experiment_name: "pend-real" for real pendulum data, "pend-sim" for simulated
+            save_dir: Directory to save/load the dataset zip file
+            train: Not used (kept for compatibility) - uses all data for generative model
+            test_split: Not used (kept for compatibility)
+            num_frames: Number of consecutive frames to sample
+            delta: Time step between frames (if None, uses original spacing)
+        """
+        self.experiment_name = experiment_name
+        self.train = train
+        self.num_frames = num_frames
+        self.delta = delta
+        
+        # Set default save_dir if not provided
+        if save_dir is None:
+            save_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                "hamiltonian-nn",
+                "experiment-real"
+            )
+        self.save_dir = save_dir
+        
+        # Load and process data - use all data for generative model
+        self.data = self._get_dataset()
+        
+        # Use all data for training (no train/test split for generative model)
+        self.x = self.data['x']
+        self.dx = self.data['dx']
+        self.t = self.data['t']
+    
+    def _read_lipson(self, dataset_name, zip_dir):
+        """Read dataset from Lipson zip file"""
+        import zipfile
+        zip_path = os.path.join(zip_dir, 'invar_datasets.zip')
+        with zipfile.ZipFile(zip_path, 'r') as z:
+            with z.open(f'{dataset_name}.txt') as f:
+                return f.read().decode('utf-8')
+    
+    def _str2array(self, data_str):
+        """Convert string data to numpy array"""
+        lines = data_str.strip().split('\n')
+        # Parse header line - remove '%' and extra spaces
+        header_names = lines[0].strip().replace('%', '').split()
+        # Add 'trial' and 't' to match the original format
+        # The actual data columns are: trial, time, and then the header variables
+        dnames = ['d' + n for n in header_names]
+        names = ['trial', 't'] + header_names + dnames
+        
+        data = []
+        for line in lines[1:]:
+            if line.strip():  # Skip empty lines
+                vals = [float(x) for x in line.split()]
+                data.append(vals)
+        return np.array(data), names
+    
+    def _get_dataset(self):
+        """Load and process Lipson pendulum dataset - use all data for generative model"""
+        if self.experiment_name == "pend-sim":
+            dataset_name = "pendulum_h_1"
+        elif self.experiment_name == "pend-real":
+            dataset_name = "real_pend_h_1"
+        else:
+            raise ValueError(f"Unknown experiment name: {self.experiment_name}")
+        
+        os.makedirs(self.save_dir, exist_ok=True)
+        out_file = os.path.join(self.save_dir, 'invar_datasets.zip')
+        
+        # Check if zip file exists in save_dir, if not check parent directory
+        if not os.path.exists(out_file):
+            parent_zip = os.path.join(os.path.dirname(self.save_dir), 'invar_datasets.zip')
+            if os.path.exists(parent_zip):
+                out_file = parent_zip
+ 
+        
+        # Use the directory containing the zip file for read_lipson
+        zip_dir = os.path.dirname(out_file)
+        data_str = self._read_lipson(dataset_name, zip_dir)
+        state, names = self._str2array(data_str)
+        
+        # Put data in a dictionary structure
+        data = {k: state[:, i:i+1] for i, k in enumerate(names)}
+        data['x'] = state[:, 2:4]
+        data['dx'] = (data['x'][1:] - data['x'][:-1]) / (data['t'][1:] - data['t'][:-1])
+        data['x'] = data['x'][:-1]
+        
+        return data
+    
+    def __len__(self):
+        return max(0, len(self.x) - self.num_frames + 1)
+    
+    def __getitem__(self, idx):
+        """
+        Returns trajectory format compatible with CHGAN framework:
+            trajectory: (num_frames, 2, 1) - [q, p] for each timestep, reshaped for single particle
+            mask: (1,) - all ones since we have 1 particle
+            label_and_props: empty tensor for compatibility
+        """
+        if idx + self.num_frames > len(self.x):
+            idx = len(self.x) - self.num_frames
+        
+        x = self.x[idx:idx + self.num_frames]  # (T, 2) where columns are [q, p]
+        
+        # Reshape to (T, 2, 1) to match trajectory format
+        trajectory = torch.tensor(x, dtype=torch.float32).unsqueeze(-1)
+        
+        # Single particle, so mask is all ones
+        mask = torch.ones(1, dtype=torch.float32)
+        
+        # Empty label and props for unconditional training
+        label_and_props = torch.tensor([], dtype=torch.float32)
+        
+        return trajectory, mask, label_and_props
+    
+    def get_full_trajectory(self, train=None):
+        """
+        Get the full trajectory for evaluation.
+        Args:
+            train: Not used (kept for compatibility) - returns all data
+        Returns:
+            trajectory: (T, 2, 1) full trajectory
+            mask: (1,) all ones
+        """
+        # Use all data for generative model
+        x = self.x
+        trajectory = torch.tensor(x, dtype=torch.float32).unsqueeze(-1)
+        mask = torch.ones(1, dtype=torch.float32)
+        
+        return trajectory, mask
+    
+    def compute_rmse(self, traj_gen, traj_real):
+        """
+        Compute RMSE between two trajectories.
+        Args:
+            traj_gen: (T, 2, 1) generated trajectory
+            traj_real: (T, 2, 1) real trajectory
+        Returns:
+            rmse: scalar RMSE value
+        """
+        traj_gen = np.array(traj_gen)
+        traj_real = np.array(traj_real)
+        diff = traj_gen - traj_real
+        rmse = np.sqrt(np.mean(diff ** 2))
+        return rmse
+    
+    def find_best_match(self, fake_traj, real_traj=None):
+        """
+        Find the best matching subsequence in the real trajectory for the fake trajectory.
+        Uses sliding window with RMSE metric across the entire trajectory.
+        
+        Args:
+            fake_traj: (T_fake, 2, 1) generated trajectory
+            real_traj: (T_real, 2, 1) real trajectory (if None, uses full trajectory)
+        
+        Returns:
+            best_idx: starting index of best match in real trajectory
+            best_rmse: RMSE at best match
+            all_rmses: array of RMSE values for each window position
+        """
+        if real_traj is None:
+            # Use full trajectory for comparison
+            real_traj, _ = self.get_full_trajectory()
+        
+        fake_traj = np.array(fake_traj)
+        real_traj = np.array(real_traj)
+        
+        T_fake = fake_traj.shape[0]
+        T_real = real_traj.shape[0]
+        
+        if T_fake > T_real:
+            return 0, float('inf'), np.array([float('inf')])
+        
+        # Compute RMSE for each possible window
+        rmses = []
+        for start_idx in range(T_real - T_fake + 1):
+            window = real_traj[start_idx:start_idx + T_fake]
+            rmse = self.compute_rmse(fake_traj, window)
+            rmses.append(rmse)
+        
+        rmses = np.array(rmses)
+        best_idx = np.argmin(rmses)
+        best_rmse = rmses[best_idx]
+        
+        return best_idx, best_rmse, rmses
+    
+    def plot_trajectory_comparison(self, fake_traj, real_traj=None, save_path=None, 
+                                   title=None, find_best_match=True):
+        """
+        Plot comparison between fake and real trajectories.
+        
+        Args:
+            fake_traj: (T_fake, 2, 1) generated trajectory
+            real_traj: (T_real, 2, 1) real trajectory (if None, uses full trajectory)
+            save_path: path to save the plot
+            title: plot title
+            find_best_match: if True, find best matching window in real_traj
+        """
+        fake_traj = np.array(fake_traj).squeeze()  # (T_fake, 2)
+        
+        if real_traj is None:
+            # Use full trajectory for comparison
+            real_traj, _ = self.get_full_trajectory()
+        
+        real_traj = np.array(real_traj).squeeze()  # (T_real, 2)
+        
+        # Find best match if requested
+        if find_best_match and fake_traj.shape[0] <= real_traj.shape[0]:
+            best_idx, best_rmse, _ = self.find_best_match(
+                fake_traj.reshape(-1, 2, 1), 
+                real_traj.reshape(-1, 2, 1)
+            )
+            real_traj = real_traj[best_idx:best_idx + fake_traj.shape[0]]
+            match_info = f" (Best match at t={best_idx}, RMSE={best_rmse:.4f})"
+        else:
+            # Just use first frames of real trajectory
+            T_fake = fake_traj.shape[0]
+            real_traj = real_traj[:T_fake]
+            rmse = self.compute_rmse(
+                fake_traj.reshape(-1, 2, 1),
+                real_traj.reshape(-1, 2, 1)
+            )
+            match_info = f" (RMSE={rmse:.4f})"
+        
+        # Create 2-subplot figure: phase space and time series
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        
+        # Phase space plot (q vs p)
+        axes[0].plot(fake_traj[:, 0], fake_traj[:, 1], 'b-', label='Fake', linewidth=2)
+        axes[0].plot(real_traj[:, 0], real_traj[:, 1], 'r--', label='Real', linewidth=2)
+        axes[0].set_xlabel('Position (q)')
+        axes[0].set_ylabel('Momentum (p)')
+        axes[0].set_title('Phase Space')
+        axes[0].legend()
+        axes[0].grid(True, alpha=0.3)
+        
+        # Time series plot
+        time = np.arange(fake_traj.shape[0])
+        axes[1].plot(time, fake_traj[:, 0], 'b-', label='Fake q', linewidth=2)
+        axes[1].plot(time, real_traj[:, 0], 'r--', label='Real q', linewidth=2)
+        axes[1].set_xlabel('Time step')
+        axes[1].set_ylabel('Position (q)')
+        axes[1].set_title('Position vs Time')
+        axes[1].legend()
+        axes[1].grid(True, alpha=0.3)
+        
+        if title is None:
+            title = f"Lipson Pendulum Trajectory Comparison{match_info}"
+        else:
+            title = f"{title}{match_info}"
+        
+        fig.suptitle(title, fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+            plt.close()
+        else:
+            plt.show()
+    
+    def comparison(self, trajectory, mask, folder, epoch, prefix, frame_idx=0):
+        """
+        Comparison method compatible with HGNRealtimeDataset.
+        For Lipson pendulum, we plot the trajectory with best match from full trajectory.
+        
+        Args:
+            trajectory: (T, 2, 1) fake trajectory
+            mask: (1,) mask (not used for single particle)
+            folder: output folder
+            epoch: training epoch
+            prefix: filename prefix
+            frame_idx: not used for Lipson (kept for compatibility)
+        """
+        os.makedirs(folder, exist_ok=True)
+        filename = f"{prefix}{epoch:0>6}"
+        file_path = os.path.join(folder, f"{filename}.jpg")
+        
+        # Get full trajectory for comparison (all data)
+        real_trajectory, _ = self.get_full_trajectory()
+        real_trajectory_np = real_trajectory.numpy()
+        
+        # Plot with best match
+        self.plot_trajectory_comparison(
+            trajectory,
+            real_trajectory_np,
+            save_path=file_path,
+            title=f"Epoch {epoch}",
+            find_best_match=True
+        )
+   
